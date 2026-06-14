@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  timelapse:
+    build: .
+    container_name: timelapse-cam
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./frames:/app/frames
+      - ./videos:/app/videos
+    environment:
+      - CAMERA_URL=rtsp://admin:batusai123@192.168.0.63:554/cam/realmonitor?channel=1&subtype=0&unicast=true&proto=Onvif
+      - CAPTURE_INTERVAL=60
+    restart: unless-stopped
+    networks:
+      - timelapse-net
+
+networks:
+  timelapse-net:
+    driver: bridge

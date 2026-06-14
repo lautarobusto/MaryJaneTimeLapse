@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Timelapse Camera</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #00d4ff;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            border: 1px solid #0f3460;
+        }
+        .stat-card h3 {
+            color: #e94560;
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+        .stat-card p {
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .controls {
+            background: #16213e;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            border: 1px solid #0f3460;
+        }
+        .controls h2 {
+            color: #00d4ff;
+            margin-bottom: 15px;
+        }
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+        }
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+        .btn-primary {
+            background: #00d4ff;
+            color: #1a1a2e;
+        }
+        .btn-primary:hover {
+            background: #00a8cc;
+        }
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+        .btn-success:hover {
+            background: #218838;
+        }
+        .btn-danger {
+            background: #e94560;
+            color: white;
+        }
+        .btn-danger:hover {
+            background: #c73e54;
+        }
+        .config-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        input[type="number"] {
+            padding: 8px;
+            border-radius: 5px;
+            border: 1px solid #0f3460;
+            background: #1a1a2e;
+            color: #eee;
+            width: 100px;
+        }
+        .gallery {
+            margin-bottom: 30px;
+        }
+        .gallery h2 {
+            color: #00d4ff;
+            margin-bottom: 15px;
+        }
+        .frame-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+        }
+        .frame-item {
+            background: #16213e;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid #0f3460;
+        }
+        .frame-item img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+        }
+        .frame-item p {
+            padding: 8px;
+            font-size: 12px;
+            text-align: center;
+        }
+        .video-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+        }
+        .video-item {
+            background: #16213e;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid #0f3460;
+        }
+        .video-item video {
+            width: 100%;
+        }
+        .video-item p {
+            padding: 10px;
+            font-size: 14px;
+            text-align: center;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            display: none;
+        }
+        .status.success {
+            background: #28a745;
+            display: block;
+        }
+        .status.error {
+            background: #e94560;
+            display: block;
+        }
+        .camera-info {
+            font-size: 12px;
+            color: #888;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📷 Timelapse - Imou IPC-C22E-A</h1>
+        
+        <div class="stats">
+            <div class="stat-card">
+                <h3>Frames Capturados</h3>
+                <p id="frame-count">{{ frame_count }}</p>
+            </div>
+            <div class="stat-card">
+                <h3>Intervalo</h3>
+                <p id="interval-display">{{ interval }}s</p>
+            </div>
+            <div class="stat-card">
+                <h3>Estado</h3>
+                <p id="status">Activo</p>
+            </div>
+        </div>
+
+        <div class="controls">
+            <h2>Controles</h2>
+            <div class="status" id="status-msg"></div>
+            
+            <div class="btn-group">
+                <button class="btn-primary" onclick="captureNow()">📸 Capturar Ahora</button>
+                <button class="btn-success" onclick="createTimelapse()">🎬 Crear Timelapse</button>
+                <button class="btn-danger" onclick="deleteFrames()">🗑️ Borrar Frames</button>
+            </div>
+            
+            <div class="config-row">
+                <label>Intervalo de captura (segundos):</label>
+                <input type="number" id="interval" value="{{ interval }}" min="5">
+                <button class="btn-primary" onclick="updateInterval()">Actualizar</button>
+            </div>
+            
+            <div class="camera-info">
+                Cámara: {{ camera_url }}
+            </div>
+        </div>
+
+        <div class="gallery">
+            <h2>Frames Recientes</h2>
+            <div class="frame-grid" id="frame-grid">
+                {% for frame in frames %}
+                <div class="frame-item">
+                    <img src="/frame/{{ frame }}" alt="{{ frame }}">
+                    <p>{{ frame }}</p>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="gallery">
+            <h2>Videos Timelapse</h2>
+            <div class="video-grid" id="video-grid">
+                {% for video in videos %}
+                <div class="video-item">
+                    <video controls>
+                        <source src="/video/{{ video }}" type="video/mp4">
+                    </video>
+                    <p>{{ video }}</p>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function showStatus(msg, isError) {
+            const el = document.getElementById('status-msg');
+            el.textContent = msg;
+            el.className = 'status ' + (isError ? 'error' : 'success');
+            setTimeout(() => el.className = 'status', 3000);
+        }
+
+        function captureNow() {
+            showStatus('Capturando...');
+            fetch('/api/capture', {method: 'POST'})
+                .then(r => r.json())
+                .then(data => {
+                    showStatus(data.success ? 'Frame capturado!' : 'Error al capturar', !data.success);
+                    if (data.success) refreshFrames();
+                });
+        }
+
+        function createTimelapse() {
+            showStatus('Creando timelapse...');
+            fetch('/api/timelapse', {method: 'POST'})
+                .then(r => r.json())
+                .then(data => {
+                    showStatus(data.success ? 'Timelapse creado!' : 'Error: ' + data.error, !data.success);
+                    if (data.success) refreshVideos();
+                });
+        }
+
+        function deleteFrames() {
+            if (!confirm('¿Borrar todos los frames?')) return;
+            showStatus('Borrando...');
+            fetch('/api/delete_frames', {method: 'POST'})
+                .then(r => r.json())
+                .then(data => {
+                    showStatus(data.success ? 'Frames borrados!' : 'Error', !data.success);
+                    if (data.success) {
+                        refreshFrames();
+                        document.getElementById('frame-count').textContent = '0';
+                    }
+                });
+        }
+
+        function updateInterval() {
+            const interval = document.getElementById('interval').value;
+            fetch('/api/config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({interval: interval})
+            })
+            .then(r => r.json())
+            .then(data => {
+                showStatus('Intervalo actualizado a ' + interval + 's');
+                document.getElementById('interval-display').textContent = interval + 's';
+            });
+        }
+
+        function refreshFrames() {
+            fetch('/api/frames')
+                .then(r => r.json())
+                .then(data => {
+                    const grid = document.getElementById('frame-grid');
+                    grid.innerHTML = data.frames.slice(0, 50).map(f => 
+                        `<div class="frame-item"><img src="/frame/${f}" alt="${f}"><p>${f}</p></div>`
+                    ).join('');
+                    document.getElementById('frame-count').textContent = data.frames.length;
+                });
+        }
+
+        function refreshVideos() {
+            fetch('/api/videos')
+                .then(r => r.json())
+                .then(data => {
+                    const grid = document.getElementById('video-grid');
+                    grid.innerHTML = data.videos.map(v => 
+                        `<div class="video-item"><video controls><source src="/video/${v}" type="video/mp4"></video><p>${v}</p></div>`
+                    ).join('');
+                });
+        }
+
+        // Auto refresh every 30 seconds
+        setInterval(() => {
+            refreshFrames();
+            refreshVideos();
+        }, 30000);
+    </script>
+</body>
+</html>
