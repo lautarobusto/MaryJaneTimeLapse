@@ -96,60 +96,12 @@
             align-items: center;
             margin-bottom: 10px;
         }
-        input[type="number"] {
+        input[type="number"], input[type="date"] {
             padding: 8px;
             border-radius: 5px;
             border: 1px solid #0f3460;
             background: #1a1a2e;
             color: #eee;
-            width: 100px;
-        }
-        .gallery {
-            margin-bottom: 30px;
-        }
-        .gallery h2 {
-            color: #00d4ff;
-            margin-bottom: 15px;
-        }
-        .frame-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 10px;
-        }
-        .frame-item {
-            background: #16213e;
-            border-radius: 8px;
-            overflow: hidden;
-            border: 1px solid #0f3460;
-        }
-        .frame-item img {
-            width: 100%;
-            height: 150px;
-            object-fit: cover;
-        }
-        .frame-item p {
-            padding: 8px;
-            font-size: 12px;
-            text-align: center;
-        }
-        .video-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 15px;
-        }
-        .video-item {
-            background: #16213e;
-            border-radius: 8px;
-            overflow: hidden;
-            border: 1px solid #0f3460;
-        }
-        .video-item video {
-            width: 100%;
-        }
-        .video-item p {
-            padding: 10px;
-            font-size: 14px;
-            text-align: center;
         }
         .status {
             padding: 10px;
@@ -170,6 +122,141 @@
             color: #888;
             margin-top: 10px;
         }
+        
+        /* Tabla por día */
+        .day-section {
+            background: #16213e;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            border: 1px solid #0f3460;
+            overflow: hidden;
+        }
+        .day-header {
+            background: #0f3460;
+            padding: 15px 20px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background 0.3s;
+        }
+        .day-header:hover {
+            background: #1a4a7a;
+        }
+        .day-header h3 {
+            color: #00d4ff;
+            font-size: 16px;
+        }
+        .day-header .count {
+            background: #e94560;
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .day-content {
+            display: none;
+            padding: 15px;
+        }
+        .day-content.open {
+            display: block;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #0f3460;
+        }
+        th {
+            color: #00d4ff;
+            font-weight: bold;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        td {
+            font-size: 14px;
+        }
+        .frame-thumb {
+            width: 80px;
+            height: 60px;
+            object-fit: cover;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: transform 0.3s;
+        }
+        .frame-thumb:hover {
+            transform: scale(1.1);
+        }
+        .lightbox {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+        }
+        .lightbox img {
+            max-width: 90%;
+            max-height: 90%;
+        }
+        .lightbox.open {
+            display: flex;
+        }
+        
+        /* Videos */
+        .video-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+        }
+        .video-item {
+            background: #16213e;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid #0f3460;
+        }
+        .video-item video {
+            width: 100%;
+        }
+        .video-item p {
+            padding: 10px;
+            font-size: 14px;
+            text-align: center;
+        }
+        
+        /* Formulario timelapse */
+        .timelapse-form {
+            display: flex;
+            gap: 15px;
+            align-items: flex-end;
+            flex-wrap: wrap;
+            margin-bottom: 15px;
+            padding: 15px;
+            background: #1a1a2e;
+            border-radius: 8px;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .form-group label {
+            font-size: 12px;
+            color: #888;
+        }
+        .toggle-icon {
+            font-size: 12px;
+            transition: transform 0.3s;
+        }
+        .toggle-icon.open {
+            transform: rotate(90deg);
+        }
     </style>
 </head>
 <body>
@@ -186,8 +273,8 @@
                 <p id="interval-display">{{ interval }}s</p>
             </div>
             <div class="stat-card">
-                <h3>Estado</h3>
-                <p id="status">Activo</p>
+                <h3>Días</h3>
+                <p id="days-count">{{ grouped.keys()|list|length }}</p>
             </div>
         </div>
 
@@ -197,8 +284,7 @@
             
             <div class="btn-group">
                 <button class="btn-primary" onclick="captureNow()">📸 Capturar Ahora</button>
-                <button class="btn-success" onclick="createTimelapse()">🎬 Crear Timelapse</button>
-                <button class="btn-danger" onclick="deleteFrames()">🗑️ Borrar Frames</button>
+                <button class="btn-danger" onclick="deleteFrames()">🗑️ Borrar Todo</button>
             </div>
             
             <div class="config-row">
@@ -212,20 +298,65 @@
             </div>
         </div>
 
-        <div class="gallery">
-            <h2>Frames Recientes</h2>
-            <div class="frame-grid" id="frame-grid">
-                {% for frame in frames %}
-                <div class="frame-item">
-                    <img src="/frame/{{ frame }}" alt="{{ frame }}">
-                    <p>{{ frame }}</p>
+        <!-- Generar Timelapse -->
+        <div class="controls">
+            <h2>🎬 Generar Timelapse</h2>
+            <div class="timelapse-form">
+                <div class="form-group">
+                    <label>Desde</label>
+                    <input type="date" id="date-from">
+                </div>
+                <div class="form-group">
+                    <label>Hasta</label>
+                    <input type="date" id="date-to">
+                </div>
+                <button class="btn-success" onclick="createTimelapse()">Generar Video</button>
+            </div>
+        </div>
+
+        <!-- Frames por Día -->
+        <div class="controls">
+            <h2>📸 Frames por Día</h2>
+            <div id="frames-container">
+                {% for day, frames in grouped.items() %}
+                <div class="day-section">
+                    <div class="day-header" onclick="toggleDay('{{ day }}')">
+                        <h3>{{ day }} | {{ frames|length }} frames</h3>
+                        <span class="toggle-icon" id="icon-{{ day }}">▶</span>
+                    </div>
+                    <div class="day-content" id="day-{{ day }}">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Preview</th>
+                                    <th>Hora</th>
+                                    <th>Archivo</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for frame in frames %}
+                                <tr>
+                                    <td>
+                                        <img src="/frame/{{ frame.filename }}" 
+                                             class="frame-thumb" 
+                                             onclick="showLightbox(this.src, event)"
+                                             alt="{{ frame.time }}">
+                                    </td>
+                                    <td>{{ frame.time }}</td>
+                                    <td>{{ frame.filename }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
                 {% endfor %}
             </div>
         </div>
 
-        <div class="gallery">
-            <h2>Videos Timelapse</h2>
+        <!-- Videos -->
+        <div class="controls">
+            <h2>🎥 Videos Generados</h2>
             <div class="video-grid" id="video-grid">
                 {% for video in videos %}
                 <div class="video-item">
@@ -239,6 +370,11 @@
         </div>
     </div>
 
+    <!-- Lightbox -->
+    <div class="lightbox" id="lightbox" onclick="closeLightbox()">
+        <img id="lightbox-img" src="">
+    </div>
+
     <script>
         function showStatus(msg, isError) {
             const el = document.getElementById('status-msg');
@@ -247,24 +383,54 @@
             setTimeout(() => el.className = 'status', 3000);
         }
 
+        function toggleDay(day) {
+            const content = document.getElementById('day-' + day);
+            const icon = document.getElementById('icon-' + day);
+            content.classList.toggle('open');
+            icon.classList.toggle('open');
+            icon.textContent = content.classList.contains('open') ? '▼' : '▶';
+        }
+
+        function showLightbox(src, event) {
+            event.stopPropagation();
+            document.getElementById('lightbox-img').src = src;
+            document.getElementById('lightbox').classList.add('open');
+        }
+
+        function closeLightbox() {
+            document.getElementById('lightbox').classList.remove('open');
+        }
+
         function captureNow() {
             showStatus('Capturando...');
             fetch('/api/capture', {method: 'POST'})
                 .then(r => r.json())
                 .then(data => {
                     showStatus(data.success ? 'Frame capturado!' : 'Error al capturar', !data.success);
-                    if (data.success) refreshFrames();
+                    if (data.success) setTimeout(refreshFrames, 2000);
                 });
         }
 
         function createTimelapse() {
+            const dateFrom = document.getElementById('date-from').value;
+            const dateTo = document.getElementById('date-to').value;
+            
+            if (!dateFrom || !dateTo) {
+                showStatus('Seleccioná fecha desde y hasta', true);
+                return;
+            }
+            
             showStatus('Creando timelapse...');
-            fetch('/api/timelapse', {method: 'POST'})
-                .then(r => r.json())
-                .then(data => {
-                    showStatus(data.success ? 'Timelapse creado!' : 'Error: ' + data.error, !data.success);
-                    if (data.success) refreshVideos();
-                });
+            fetch('/api/timelapse', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({date_from: dateFrom, date_to: dateTo})
+            })
+            .then(r => r.json())
+            .then(data => {
+                showStatus(data.success ? 'Timelapse creado!' : 'Error: ' + data.error, !data.success);
+                if (data.success) setTimeout(refreshVideos, 3000);
+            });
         }
 
         function deleteFrames() {
@@ -296,15 +462,7 @@
         }
 
         function refreshFrames() {
-            fetch('/api/frames')
-                .then(r => r.json())
-                .then(data => {
-                    const grid = document.getElementById('frame-grid');
-                    grid.innerHTML = data.frames.slice(0, 50).map(f => 
-                        `<div class="frame-item"><img src="/frame/${f}" alt="${f}"><p>${f}</p></div>`
-                    ).join('');
-                    document.getElementById('frame-count').textContent = data.frames.length;
-                });
+            location.reload();
         }
 
         function refreshVideos() {
@@ -320,8 +478,12 @@
 
         // Auto refresh every 30 seconds
         setInterval(() => {
-            refreshFrames();
-            refreshVideos();
+            fetch('/api/frames')
+                .then(r => r.json())
+                .then(data => {
+                    const count = Object.values(data.frames).flat().length;
+                    document.getElementById('frame-count').textContent = count;
+                });
         }, 30000);
     </script>
 </body>
