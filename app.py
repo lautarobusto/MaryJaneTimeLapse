@@ -2,6 +2,10 @@ import os
 import subprocess
 import glob
 import re
+import uuid
+import threading
+import shutil
+import tempfile
 from datetime import datetime, timedelta
 from flask import Flask, render_template, jsonify, request, send_file
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -11,6 +15,7 @@ app = Flask(__name__)
 # Config
 CAMERA_URL = os.environ.get('CAMERA_URL', 'rtsp://admin:batusai123@192.168.0.63:554/cam/realmonitor?channel=1&subtype=0&unicast=true&proto=Onvif')
 CAPTURE_INTERVAL = int(os.environ.get('CAPTURE_INTERVAL', '60'))
+TIMELAPSE_FRAME_DURATION = float(os.environ.get('TIMELAPSE_FRAME_DURATION', '0.1'))
 FRAMES_DIR = '/app/frames'
 VIDEOS_DIR = '/app/videos'
 
@@ -18,6 +23,7 @@ os.makedirs(FRAMES_DIR, exist_ok=True)
 os.makedirs(VIDEOS_DIR, exist_ok=True)
 
 scheduler = BackgroundScheduler()
+jobs = {}
 
 def parse_frame_date(filename):
     """Extract date from frame_YYYYMMDD_HHMMSS.jpg"""
@@ -75,6 +81,32 @@ def capture_frame():
         print(f"[ERR] Capture failed: {e}")
         return False
 
+def get_video_duration(filepath):
+    """Get video duration in seconds using ffprobe"""
+    try:
+        result = subprocess.run([
+            'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1', filepath
+        ], capture_output=True, text=True, timeout=15)
+        if result.returncode == 0:
+            return float(result.stdout.strip())
+    except Exception:
+        pass
+    return None
+
+def generate_thumb(filepath, thumb_path):
+    """Extract thumbnail from video at 50% duration"""
+    dur = get_video_duration(filepath)
+    seek_time = max(1, dur / 2) if dur else 5
+    try:
+        subprocess.run([
+            'ffmpeg', '-y', '-ss', str(seek_time), '-i', filepath,
+            '-vframes', '1', '-q:v', '3', '-vf', 'scale=480:-1',
+            thumb_path
+        ], capture_output=True, text=True, timeout=30)
+    except Exception:
+        pass
+
 def create_timelapse(date_from=None, date_to=None):
     """Create timelapse from frames in date range"""
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -87,6 +119,8 @@ def create_timelapse(date_from=None, date_to=None):
     for f in frames:
         dt = parse_frame_date(os.path.basename(f))
         if dt:
+            if os.path.getsize(f) == 0:
+                continue
             if date_from and dt.date() < date_from:
                 continue
             if date_to and dt.date() > date_to:
@@ -100,33 +134,33 @@ def create_timelapse(date_from=None, date_to=None):
     # Sort by time
     filtered.sort()
     
-    # Create temp list file for ffmpeg
-    list_file = f"{FRAMES_DIR}/timelapse_list_{timestamp}.txt"
-    with open(list_file, 'w') as f:
-        for frame in filtered:
-            f.write(f"file '{os.path.abspath(frame)}'\n")
+    temp_dir = tempfile.mkdtemp(prefix=f"timelapse_{timestamp}_", dir=FRAMES_DIR)
+    for i, frame in enumerate(filtered, start=1):
+        os.symlink(os.path.abspath(frame), os.path.join(temp_dir, f"frame_{i:06d}.jpg"))
     
     try:
         result = subprocess.run([
-            'ffmpeg', '-y', '-f', 'concat', '-safe', '0',
-            '-i', list_file,
-            '-vf', 'fps=10,scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black',
+            'ffmpeg', '-y', '-framerate', str(1 / TIMELAPSE_FRAME_DURATION),
+            '-i', f"{temp_dir}/frame_%06d.jpg",
+            '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black',
             '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
             '-r', '30', output_file
-        ], capture_output=True, text=True, timeout=300)
+        ], capture_output=True, text=True, timeout=900)
         
-        os.remove(list_file)
+        shutil.rmtree(temp_dir, ignore_errors=True)
         
         if result.returncode == 0:
             print(f"[OK] Created timelapse {output_file}")
+            # Generate thumbnail
+            thumb_path = output_file.replace('.mp4', '_thumb.jpg')
+            generate_thumb(output_file, thumb_path)
             return output_file
         else:
             print(f"[ERR] ffmpeg failed: {result.stderr[:500]}")
             return None
     except Exception as e:
         print(f"[ERR] Timelapse creation failed: {e}")
-        if os.path.exists(list_file):
-            os.remove(list_file)
+        shutil.rmtree(temp_dir, ignore_errors=True)
         return None
 
 # Schedule automatic capture
@@ -136,13 +170,23 @@ scheduler.start()
 @app.route('/')
 def index():
     grouped = group_frames_by_day()
-    videos = sorted(glob.glob(f"{VIDEOS_DIR}/timelapse_*.mp4"), reverse=True)
-    
     frame_count = len(glob.glob(f"{FRAMES_DIR}/frame_*.jpg"))
+    
+    videos_glob = sorted(glob.glob(f"{VIDEOS_DIR}/timelapse_*.mp4"), reverse=True)
+    video_list = []
+    for v in videos_glob:
+        basename = os.path.basename(v)
+        duration = get_video_duration(v)
+        has_thumb = os.path.exists(v.replace('.mp4', '_thumb.jpg'))
+        video_list.append({
+            'filename': basename,
+            'duration': format_duration(duration),
+            'has_thumb': has_thumb
+        })
     
     return render_template('index.html', 
                          grouped=grouped,
-                         videos=[os.path.basename(v) for v in videos],
+                         videos=video_list,
                          frame_count=frame_count,
                          interval=CAPTURE_INTERVAL,
                          camera_url=CAMERA_URL)
@@ -163,21 +207,57 @@ def api_timelapse():
     if data.get('date_to'):
         date_to = datetime.strptime(data['date_to'], '%Y-%m-%d').date()
     
-    output = create_timelapse(date_from, date_to)
-    if output:
-        return jsonify({'success': True, 'file': os.path.basename(output)})
-    else:
-        return jsonify({'success': False, 'error': 'Failed to create timelapse'})
+    job_id = str(uuid.uuid4())[:8]
+    jobs[job_id] = {'status': 'processing', 'file': None, 'error': None}
+    
+    def run():
+        try:
+            output = create_timelapse(date_from, date_to)
+            if output:
+                jobs[job_id] = {'status': 'done', 'file': os.path.basename(output), 'error': None}
+            else:
+                jobs[job_id] = {'status': 'error', 'file': None, 'error': 'No hay suficientes frames'}
+        except Exception as e:
+            jobs[job_id] = {'status': 'error', 'file': None, 'error': str(e)}
+    
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({'success': True, 'job_id': job_id, 'status': 'processing'})
+
+@app.route('/api/timelapse/<job_id>')
+def api_timelapse_status(job_id):
+    job = jobs.get(job_id)
+    if not job:
+        return jsonify({'status': 'not_found'}), 404
+    return jsonify(job)
 
 @app.route('/api/frames')
 def api_frames():
     grouped = group_frames_by_day()
     return jsonify({'days': list(grouped.keys()), 'frames': {k: [f['filename'] for f in v] for k, v in grouped.items()}})
 
+def format_duration(seconds):
+    if seconds is None:
+        return 'N/A'
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    if h > 0:
+        return f'{h}:{m:02d}:{s:02d}'
+    return f'{m}:{s:02d}'
+
 @app.route('/api/videos')
 def api_videos():
     videos = sorted(glob.glob(f"{VIDEOS_DIR}/timelapse_*.mp4"), reverse=True)
-    return jsonify({'videos': [os.path.basename(v) for v in videos]})
+    result = []
+    for v in videos:
+        basename = os.path.basename(v)
+        duration = get_video_duration(v)
+        has_thumb = os.path.exists(v.replace('.mp4', '_thumb.jpg'))
+        result.append({
+            'filename': basename,
+            'duration': format_duration(duration),
+            'has_thumb': has_thumb
+        })
+    return jsonify({'videos': result})
 
 @app.route('/frame/<filename>')
 def serve_frame(filename):
@@ -185,7 +265,14 @@ def serve_frame(filename):
 
 @app.route('/video/<filename>')
 def serve_video(filename):
-    return send_file(f"{VIDEOS_DIR}/{filename}")
+    return send_file(f"{VIDEOS_DIR}/{filename}", as_attachment=True)
+
+@app.route('/thumb/<filename>')
+def serve_thumb(filename):
+    thumb_path = f"{VIDEOS_DIR}/{filename}"
+    if os.path.exists(thumb_path):
+        return send_file(thumb_path)
+    return ('', 404)
 
 @app.route('/api/delete_frames', methods=['POST'])
 def delete_frames():
@@ -193,6 +280,16 @@ def delete_frames():
     for f in frames:
         os.remove(f)
     return jsonify({'success': True, 'deleted': len(frames)})
+
+@app.route('/api/delete_videos', methods=['POST'])
+def delete_videos():
+    files = glob.glob(f"{VIDEOS_DIR}/timelapse_*.mp4") + glob.glob(f"{VIDEOS_DIR}/timelapse_*_thumb.jpg")
+    deleted = 0
+    for f in files:
+        if os.path.exists(f):
+            os.remove(f)
+            deleted += 1
+    return jsonify({'success': True, 'deleted': deleted})
 
 @app.route('/api/config', methods=['POST'])
 def update_config():

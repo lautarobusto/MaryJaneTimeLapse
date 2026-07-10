@@ -212,22 +212,76 @@
         /* Videos */
         .video-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
             gap: 15px;
         }
-        .video-item {
-            background: #16213e;
+        .video-card {
+            background: #1a1a2e;
             border-radius: 8px;
             overflow: hidden;
             border: 1px solid #0f3460;
+            transition: border-color 0.3s;
         }
-        .video-item video {
+        .video-card:hover {
+            border-color: #00d4ff;
+        }
+        .video-card .thumb-wrap {
+            position: relative;
             width: 100%;
+            aspect-ratio: 16 / 9;
+            background: #0f3460;
+            overflow: hidden;
         }
-        .video-item p {
+        .video-card .thumb-wrap img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .video-card .thumb-wrap .no-thumb {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #555;
+            font-size: 16px;
+        }
+        .video-card .duration-badge {
+            position: absolute;
+            bottom: 8px;
+            right: 8px;
+            background: rgba(0,0,0,0.8);
+            color: #fff;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .video-card .card-body {
+            padding: 12px;
+        }
+        .video-card .card-body p {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 10px;
+            word-break: break-all;
+        }
+        .video-card .btn-download {
+            display: block;
+            width: 100%;
             padding: 10px;
+            background: #00d4ff;
+            color: #1a1a2e;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
             font-size: 14px;
+            font-weight: bold;
             text-align: center;
+            text-decoration: none;
+            transition: background 0.3s;
+        }
+        .video-card .btn-download:hover {
+            background: #00a8cc;
         }
         
         /* Formulario timelapse */
@@ -303,11 +357,11 @@
             <h2>🎬 Generar Timelapse</h2>
             <div class="timelapse-form">
                 <div class="form-group">
-                    <label>Desde</label>
+                    <label>Desde (opcional)</label>
                     <input type="date" id="date-from">
                 </div>
                 <div class="form-group">
-                    <label>Hasta</label>
+                    <label>Hasta (opcional)</label>
                     <input type="date" id="date-to">
                 </div>
                 <button class="btn-success" onclick="createTimelapse()">Generar Video</button>
@@ -357,13 +411,24 @@
         <!-- Videos -->
         <div class="controls">
             <h2>🎥 Videos Generados</h2>
+            <div class="btn-group">
+                <button class="btn-danger" onclick="deleteVideos()">Borrar Videos</button>
+            </div>
             <div class="video-grid" id="video-grid">
-                {% for video in videos %}
-                <div class="video-item">
-                    <video controls>
-                        <source src="/video/{{ video }}" type="video/mp4">
-                    </video>
-                    <p>{{ video }}</p>
+                {% for v in videos %}
+                <div class="video-card">
+                    <div class="thumb-wrap">
+                        {% if v.has_thumb %}
+                        <img src="/thumb/{{ v.filename.replace('.mp4', '_thumb.jpg') }}" alt="{{ v.filename }}">
+                        {% else %}
+                        <div class="no-thumb">🎬</div>
+                        {% endif %}
+                        <span class="duration-badge">{{ v.duration }}</span>
+                    </div>
+                    <div class="card-body">
+                        <p>{{ v.filename }}</p>
+                        <a class="btn-download" href="/video/{{ v.filename }}" download>⬇ Descargar</a>
+                    </div>
                 </div>
                 {% endfor %}
             </div>
@@ -414,13 +479,12 @@
         function createTimelapse() {
             const dateFrom = document.getElementById('date-from').value;
             const dateTo = document.getElementById('date-to').value;
+            const btn = document.querySelector('.btn-success');
             
-            if (!dateFrom || !dateTo) {
-                showStatus('Seleccioná fecha desde y hasta', true);
-                return;
-            }
+            btn.disabled = true;
+            btn.textContent = 'Procesando...';
+            showStatus('Iniciando timelapse...');
             
-            showStatus('Creando timelapse...');
             fetch('/api/timelapse', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -428,8 +492,41 @@
             })
             .then(r => r.json())
             .then(data => {
-                showStatus(data.success ? 'Timelapse creado!' : 'Error: ' + data.error, !data.success);
-                if (data.success) setTimeout(refreshVideos, 3000);
+                if (!data.success && !data.job_id) {
+                    showStatus('Error al iniciar', true);
+                    btn.disabled = false;
+                    btn.textContent = 'Generar Video';
+                    return;
+                }
+                
+                const jobId = data.job_id;
+                const startTime = Date.now();
+                const statusEl = document.getElementById('status-msg');
+                
+                const poll = setInterval(() => {
+                    fetch('/api/timelapse/' + jobId)
+                        .then(r => r.json())
+                        .then(job => {
+                            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+                            const mins = Math.floor(elapsed / 60);
+                            const secs = elapsed % 60;
+                            
+                            if (job.status === 'processing') {
+                                showStatus(`Creando timelapse... ${mins}:${String(secs).padStart(2,'0')}`);
+                            } else if (job.status === 'done') {
+                                clearInterval(poll);
+                                showStatus('Timelapse creado!');
+                                btn.disabled = false;
+                                btn.textContent = 'Generar Video';
+                                refreshVideos();
+                            } else if (job.status === 'error') {
+                                clearInterval(poll);
+                                showStatus('Error: ' + (job.error || 'desconocido'), true);
+                                btn.disabled = false;
+                                btn.textContent = 'Generar Video';
+                            }
+                        });
+                }, 2000);
             });
         }
 
@@ -444,6 +541,17 @@
                         refreshFrames();
                         document.getElementById('frame-count').textContent = '0';
                     }
+                });
+        }
+
+        function deleteVideos() {
+            if (!confirm('¿Borrar todos los videos generados? Los frames quedan intactos.')) return;
+            showStatus('Borrando videos...');
+            fetch('/api/delete_videos', {method: 'POST'})
+                .then(r => r.json())
+                .then(data => {
+                    showStatus(data.success ? `Videos borrados (${data.deleted} archivos)` : 'Error', !data.success);
+                    if (data.success) refreshVideos();
                 });
         }
 
@@ -470,9 +578,25 @@
                 .then(r => r.json())
                 .then(data => {
                     const grid = document.getElementById('video-grid');
-                    grid.innerHTML = data.videos.map(v => 
-                        `<div class="video-item"><video controls><source src="/video/${v}" type="video/mp4"></video><p>${v}</p></div>`
-                    ).join('');
+                    if (!data.videos.length) {
+                        grid.innerHTML = '<p>No hay videos generados.</p>';
+                        return;
+                    }
+                    grid.innerHTML = data.videos.map(v => {
+                        const thumbFile = v.filename.replace('.mp4', '_thumb.jpg');
+                        return `<div class="video-card">
+                            <div class="thumb-wrap">
+                                ${v.has_thumb 
+                                    ? `<img src="/thumb/${thumbFile}" alt="${v.filename}">`
+                                    : `<div class="no-thumb">🎬</div>`}
+                                <span class="duration-badge">${v.duration}</span>
+                            </div>
+                            <div class="card-body">
+                                <p>${v.filename}</p>
+                                <a class="btn-download" href="/video/${v.filename}" download>⬇ Descargar</a>
+                            </div>
+                        </div>`;
+                    }).join('');
                 });
         }
 
