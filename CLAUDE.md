@@ -8,7 +8,9 @@ Single-file Flask app (`app.py`) + one Jinja template (`templates/index.html`) t
 
 ## Commands
 
-Runs only inside Docker (hardcoded `/app/...` paths; ffmpeg, ffprobe and rclone must be on PATH). Production host: `ssh lautaro@192.168.0.10`, deployed in `~/MaryJaneTimeLapse` (files copied over, built there).
+Runs only inside Docker (hardcoded `/app/...` paths; ffmpeg, ffprobe and rclone must be on PATH).
+
+**Production** (`ssh lautaro@192.168.0.10`): Portainer stack `maryjanetimelapse` (https://192.168.0.10:9443) running `ghcr.io/lautarobusto/maryjanetimelapse:latest`. Deploy = push to `master` → CI builds and pushes the image → Watchtower (label `com.centurylinklabs.watchtower.enable`) pulls it, or redeploy the stack in Portainer with "re-pull image". The stack's compose lives in Portainer (not the repo's `docker-compose.yml`); `CAMERA_URL` is a stack env var; `/home/lautaro/MaryJaneTimeLapse/data` holds the persisted settings. The repo's `docker-compose.yml` is for building/running locally.
 
 ```bash
 docker compose up -d --build      # http://<host>:5000
