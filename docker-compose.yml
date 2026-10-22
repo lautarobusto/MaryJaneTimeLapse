@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   timelapse:
     build: .
@@ -7,15 +5,19 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - ./frames:/app/frames
-      - ./videos:/app/videos
+      # rclone config with the Box token (rclone refreshes it, so it must be writable)
+      - ${RCLONE_CONFIG_DIR:-~/.config/rclone}:/config/rclone
+      - ./data:/app/data
+    tmpfs:
+      # Last 48h of frames live in RAM (uploaded to Box in batches); nothing is written to the disk
+      - /app/spool:size=3g,uid=1000,gid=1000
+      - /app/work:size=8g,uid=1000,gid=1000
+    env_file: .env
     environment:
-      - CAMERA_URL=rtsp://admin:batusai123@192.168.0.63:554/cam/realmonitor?channel=1&subtype=0&unicast=true&proto=Onvif
-      - CAPTURE_INTERVAL=60
+      - BOX_REMOTE=box:MaryJaneTimeLapse
+      - TIMELAPSE_FRAME_DURATION=0.1
+      - TIMELAPSE_LOOK=plantas      # plantas | natural | cinematic | cinemascope
+      - UPLOAD_INTERVAL=600         # seconds between batch uploads to Box
+      - LOCAL_RETENTION_HOURS=48    # frames kept in RAM for quick timelapses
+    stop_grace_period: 2m
     restart: unless-stopped
-    networks:
-      - timelapse-net
-
-networks:
-  timelapse-net:
-    driver: bridge

@@ -343,7 +343,7 @@
             
             <div class="config-row">
                 <label>Intervalo de captura (segundos):</label>
-                <input type="number" id="interval" value="{{ interval }}" min="5">
+                <input type="number" id="interval" value="{{ interval }}" min="60">
                 <button class="btn-primary" onclick="updateInterval()">Actualizar</button>
             </div>
             
@@ -391,9 +391,9 @@
                                 {% for frame in frames %}
                                 <tr>
                                     <td>
-                                        <img src="/frame/{{ frame.filename }}" 
-                                             class="frame-thumb" 
-                                             onclick="showLightbox(this.src, event)"
+                                        <img src="/frame/{{ frame.filename }}?thumb=1" 
+                                             class="frame-thumb" loading="lazy"
+                                             onclick="showLightbox('/frame/{{ frame.filename }}', event)"
                                              alt="{{ frame.time }}">
                                     </td>
                                     <td>{{ frame.time }}</td>
@@ -512,7 +512,7 @@
                             const secs = elapsed % 60;
                             
                             if (job.status === 'processing') {
-                                showStatus(`Creando timelapse... ${mins}:${String(secs).padStart(2,'0')}`);
+                                showStatus(`${job.progress || 'Creando timelapse...'} ${mins}:${String(secs).padStart(2,'0')}`);
                             } else if (job.status === 'done') {
                                 clearInterval(poll);
                                 showStatus('Timelapse creado!');
