@@ -28,7 +28,7 @@ MIN_CAPTURE_INTERVAL = 60
 #     need no download. spool/pending holds hardlinks of frames not yet uploaded to Box.
 #   WORK_DIR  (tmpfs/RAM): scratch space for building timelapses
 #   DATA_DIR  (disk): small settings/index files only
-#   Box: {BOX_REMOTE}/frames/YYYY-MM-DD/frame_*.jpg, thumbs/ (same layout, 320px), videos/
+#   Box: {BOX_REMOTE}/frames/YYYY-MM-DD/frame_*.jpg, thumbs/ (same layout, 320px)
 SPOOL_DIR = '/app/spool'
 WORK_DIR = '/app/work'
 DATA_DIR = '/app/data'
@@ -36,10 +36,12 @@ SPOOL_FRAMES = f"{SPOOL_DIR}/frames"
 SPOOL_THUMBS = f"{SPOOL_DIR}/thumbs"
 SPOOL_TMP = f"{SPOOL_DIR}/tmp"
 SPOOL_PENDING = f"{SPOOL_DIR}/pending"
+# Generated videos stay in RAM for download only (not uploaded to Box; lost on restart)
+VIDEOS_DIR = f"{WORK_DIR}/videos"
 SETTINGS_FILE = f"{DATA_DIR}/settings.json"
 VIDEOS_INDEX = f"{DATA_DIR}/videos.json"
 
-for d in (SPOOL_FRAMES, SPOOL_THUMBS, SPOOL_TMP, SPOOL_PENDING, WORK_DIR, DATA_DIR):
+for d in (SPOOL_FRAMES, SPOOL_THUMBS, SPOOL_TMP, SPOOL_PENDING, WORK_DIR, VIDEOS_DIR, DATA_DIR):
     os.makedirs(d, exist_ok=True)
 
 FRAME_RE = re.compile(r'^frame_(\d{8})_(\d{6})\.jpg$')
@@ -111,7 +113,6 @@ def _list_remote(path):
 
 
 remote_frames = RemoteCache(lambda: _list_remote('frames'), ttl=120)
-remote_videos = RemoteCache(lambda: _list_remote('videos'), ttl=300)
 remote_about = RemoteCache(lambda: json.loads(rclone('about', 'box:', '--json', timeout=60).stdout or '{}'), ttl=600)
 
 
@@ -312,7 +313,7 @@ def format_duration(seconds):
 
 def list_videos():
     index = load_json(VIDEOS_INDEX, {})
-    names = set(remote_videos.get())
+    names = set(os.listdir(VIDEOS_DIR))
     result = []
     for name in sorted((n for n in names if n.endswith('.mp4')), reverse=True):
         result.append({
@@ -347,9 +348,11 @@ DEFAULT_LOOK = os.environ.get('TIMELAPSE_LOOK', 'plantas')
 
 
 def create_timelapse(job_id, date_from=None, date_to=None, look=DEFAULT_LOOK):
-    """Download the frames in range from Box to RAM, render, and upload the video to Box"""
-    def status(msg):
+    """Download the frames in range from Box to RAM and render the video into VIDEOS_DIR"""
+    def status(msg, percent=None):
         jobs[job_id]['progress'] = msg
+        if percent is not None:
+            jobs[job_id]['percent'] = round(percent, 1)
 
     selected = []
     for name, dt in all_frames().items():
@@ -382,15 +385,34 @@ def create_timelapse(job_id, date_from=None, date_to=None, look=DEFAULT_LOOK):
             else:
                 to_download.append(f"{day}/{name}")
 
+        # Progress: download 0-40% (only when needed), render up to 95%, thumbnail to 100%
+        render_start = 40 if to_download else 0
         if to_download:
-            status(f'Descargando {len(to_download)} frames de Box...')
+            status(f'Descargando {len(to_download)} frames de Box...', 0)
             list_file = f"{job_dir}/files.txt"
             with open(list_file, 'w') as f:
                 f.write('\n'.join(to_download))
-            result = rclone('copy', f"{BOX_REMOTE}/frames", src_dir, '--files-from', list_file,
-                            '--transfers', '16', '--checkers', '16', timeout=3600)
-            if result.returncode != 0:
-                raise RuntimeError(f"Descarga de Box falló: {result.stderr[-200:]}")
+            local_count = len(selected) - len(to_download)
+            proc = subprocess.Popen(['rclone', 'copy', f"{BOX_REMOTE}/frames", src_dir, '--files-from', list_file,
+                                     '--transfers', '16', '--checkers', '16'],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+            # Drain stderr in the background so the pipe never fills up while we poll
+            err = []
+            reader = threading.Thread(target=lambda: err.append(proc.stderr.read()), daemon=True)
+            reader.start()
+            deadline = time.time() + 3600
+            while proc.poll() is None:
+                if time.time() > deadline:
+                    proc.kill()
+                    break
+                done = max(0, count_files(src_dir) - local_count)
+                status(f'Descargando frames de Box ({done}/{len(to_download)})...',
+                       render_start * done / len(to_download))
+                time.sleep(1)
+            proc.wait()
+            reader.join(timeout=5)
+            if proc.returncode != 0:
+                raise RuntimeError(f"Descarga de Box falló: {''.join(err)[-200:]}")
 
         i = 0
         for dt, name in selected:
@@ -401,36 +423,50 @@ def create_timelapse(job_id, date_from=None, date_to=None, look=DEFAULT_LOOK):
         if i < 2:
             raise ValueError('No hay suficientes frames')
 
-        status(f'Generando video con {i} frames...')
+        status(f'Generando video con {i} frames...', render_start)
         output_file = f"{job_dir}/timelapse_{timestamp}.mp4"
-        result = subprocess.run([
-            'ffmpeg', '-y', '-framerate', str(1 / TIMELAPSE_FRAME_DURATION),
+        expected = i * TIMELAPSE_FRAME_DURATION
+        proc = subprocess.Popen([
+            'ffmpeg', '-y', '-nostats', '-progress', 'pipe:1',
+            '-framerate', str(1 / TIMELAPSE_FRAME_DURATION),
             '-i', f"{seq_dir}/frame_%06d.jpg",
             '-vf', LOOKS.get(look, LOOKS[DEFAULT_LOOK]),
             '-c:v', 'libx264', '-preset', 'slow', '-crf', '18', '-pix_fmt', 'yuv420p',
             '-movflags', '+faststart', output_file
-        ], capture_output=True, text=True, timeout=3600)
-        if result.returncode != 0:
-            print(f"[ERR] ffmpeg failed: {result.stderr[-500:]}")
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        err = []
+        reader = threading.Thread(target=lambda: err.append(proc.stderr.read()), daemon=True)
+        reader.start()
+        timer = threading.Timer(3600, proc.kill)
+        timer.start()
+        for line in proc.stdout:
+            if line.startswith('out_time_us='):
+                try:
+                    frac = min(1.0, int(line.split('=', 1)[1]) / 1e6 / expected)
+                except ValueError:
+                    continue
+                status(f'Generando video con {i} frames ({frac * 100:.0f}%)...',
+                       render_start + (95 - render_start) * frac)
+        proc.wait()
+        timer.cancel()
+        reader.join(timeout=5)
+        if proc.returncode != 0:
+            print(f"[ERR] ffmpeg failed: {''.join(err)[-500:]}")
             raise RuntimeError('ffmpeg falló al generar el video')
 
+        status('Generando miniatura...', 95)
         thumb_path = output_file.replace('.mp4', '_thumb.jpg')
         generate_thumb(output_file, thumb_path)
         duration = get_video_duration(output_file)
-        shutil.rmtree(src_dir, ignore_errors=True)
-
-        status('Subiendo video a Box...')
-        for f in (output_file, thumb_path):
+        for f in (thumb_path, output_file):
             if os.path.exists(f):
-                result = rclone('copy', f, f"{BOX_REMOTE}/videos", timeout=3600)
-                if result.returncode != 0:
-                    raise RuntimeError(f"Subida a Box falló: {result.stderr[-200:]}")
+                shutil.move(f, f"{VIDEOS_DIR}/{os.path.basename(f)}")
 
         with videos_lock:
             index = load_json(VIDEOS_INDEX, {})
             index[os.path.basename(output_file)] = duration
             save_json(VIDEOS_INDEX, index)
-        remote_videos.invalidate()
+        status('Listo', 100)
         print(f"[OK] Created timelapse {os.path.basename(output_file)}")
         return os.path.basename(output_file)
     finally:
@@ -487,7 +523,7 @@ def api_timelapse():
         return jsonify({'success': False, 'error': f'look debe ser uno de: {", ".join(LOOKS)}'}), 400
 
     job_id = str(uuid.uuid4())[:8]
-    jobs[job_id] = {'status': 'processing', 'file': None, 'error': None, 'progress': 'Preparando...'}
+    jobs[job_id] = {'status': 'processing', 'file': None, 'error': None, 'progress': 'Preparando...', 'percent': 0}
 
     def run():
         try:
@@ -545,14 +581,20 @@ def serve_frame(filename):
 def serve_video(filename):
     if not VIDEO_RE.match(filename):
         abort(404)
-    return stream_remote(f"videos/{filename}", 'video/mp4', download_name=filename)
+    path = f"{VIDEOS_DIR}/{filename}"
+    if not os.path.exists(path):
+        abort(404)
+    return send_file(path, mimetype='video/mp4', as_attachment=True, download_name=filename)
 
 
 @app.route('/thumb/<filename>')
 def serve_thumb(filename):
     if not VIDEO_RE.match(filename):
         abort(404)
-    return stream_remote(f"videos/{filename}", 'image/jpeg')
+    path = f"{VIDEOS_DIR}/{filename}"
+    if not os.path.exists(path):
+        abort(404)
+    return send_file(path, mimetype='image/jpeg')
 
 
 @app.route('/api/delete_frames', methods=['POST'])
@@ -569,11 +611,11 @@ def delete_frames():
 
 @app.route('/api/delete_videos', methods=['POST'])
 def delete_videos():
-    deleted = len(remote_videos.get())
-    rclone('purge', f"{BOX_REMOTE}/videos", timeout=1800)
     with videos_lock:
+        deleted = len(os.listdir(VIDEOS_DIR))
+        shutil.rmtree(VIDEOS_DIR, ignore_errors=True)
+        os.makedirs(VIDEOS_DIR, exist_ok=True)
         save_json(VIDEOS_INDEX, {})
-    remote_videos.invalidate()
     return jsonify({'success': True, 'deleted': deleted})
 
 

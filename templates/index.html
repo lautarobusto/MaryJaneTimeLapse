@@ -109,6 +109,29 @@
             margin-bottom: 15px;
             display: none;
         }
+        .job-progress {
+            display: none;
+            margin-top: 15px;
+        }
+        .job-progress.open {
+            display: block;
+        }
+        .job-progress-text {
+            font-size: 0.9em;
+            margin-bottom: 6px;
+        }
+        .job-progress-track {
+            height: 14px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 7px;
+            overflow: hidden;
+        }
+        .job-progress-fill {
+            height: 100%;
+            width: 0;
+            background: #28a745;
+            transition: width 0.8s ease;
+        }
         .status.success {
             background: #28a745;
             display: block;
@@ -366,6 +389,10 @@
                 </div>
                 <button class="btn-success" onclick="createTimelapse()">Generar Video</button>
             </div>
+            <div class="job-progress" id="job-progress">
+                <div class="job-progress-text" id="job-progress-text"></div>
+                <div class="job-progress-track"><div class="job-progress-fill" id="job-progress-fill"></div></div>
+            </div>
         </div>
 
         <!-- Frames por Día -->
@@ -501,8 +528,13 @@
                 
                 const jobId = data.job_id;
                 const startTime = Date.now();
-                const statusEl = document.getElementById('status-msg');
-                
+                const progressEl = document.getElementById('job-progress');
+                const progressText = document.getElementById('job-progress-text');
+                const progressFill = document.getElementById('job-progress-fill');
+                progressFill.style.width = '0%';
+                progressText.textContent = 'Preparando...';
+                progressEl.classList.add('open');
+
                 const poll = setInterval(() => {
                     fetch('/api/timelapse/' + jobId)
                         .then(r => r.json())
@@ -510,10 +542,14 @@
                             const elapsed = Math.floor((Date.now() - startTime) / 1000);
                             const mins = Math.floor(elapsed / 60);
                             const secs = elapsed % 60;
-                            
+
                             if (job.status === 'processing') {
-                                showStatus(`${job.progress || 'Creando timelapse...'} ${mins}:${String(secs).padStart(2,'0')}`);
-                            } else if (job.status === 'done') {
+                                progressText.textContent = `${job.progress || 'Creando timelapse...'} · ${mins}:${String(secs).padStart(2,'0')}`;
+                                progressFill.style.width = (job.percent || 0) + '%';
+                            } else {
+                                progressEl.classList.remove('open');
+                            }
+                            if (job.status === 'done') {
                                 clearInterval(poll);
                                 showStatus('Timelapse creado!');
                                 btn.disabled = false;
