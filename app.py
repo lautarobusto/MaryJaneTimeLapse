@@ -22,6 +22,7 @@ BOX_REMOTE = os.environ.get('BOX_REMOTE', 'box:MaryJaneTimeLapse').rstrip('/')
 UPLOAD_INTERVAL = int(os.environ.get('UPLOAD_INTERVAL', '600'))
 LOCAL_RETENTION_HOURS = float(os.environ.get('LOCAL_RETENTION_HOURS', '48'))
 MIN_CAPTURE_INTERVAL = 60
+THUMB_CACHE_DAYS = int(os.environ.get('THUMB_CACHE_DAYS', '7'))
 
 # Storage layout:
 #   SPOOL_DIR (tmpfs/RAM): the last LOCAL_RETENTION_HOURS of frames, so short timelapses
@@ -38,14 +39,17 @@ SPOOL_TMP = f"{SPOOL_DIR}/tmp"
 SPOOL_PENDING = f"{SPOOL_DIR}/pending"
 # Generated videos stay in RAM for download only (not uploaded to Box; lost on restart)
 VIDEOS_DIR = f"{WORK_DIR}/videos"
+# Whole days of thumbs copied from Box so the frame viewer can scrub them quickly
+THUMB_CACHE = f"{WORK_DIR}/thumbcache"
 SETTINGS_FILE = f"{DATA_DIR}/settings.json"
 VIDEOS_INDEX = f"{DATA_DIR}/videos.json"
 
-for d in (SPOOL_FRAMES, SPOOL_THUMBS, SPOOL_TMP, SPOOL_PENDING, WORK_DIR, VIDEOS_DIR, DATA_DIR):
+for d in (SPOOL_FRAMES, SPOOL_THUMBS, SPOOL_TMP, SPOOL_PENDING, WORK_DIR, VIDEOS_DIR, THUMB_CACHE, DATA_DIR):
     os.makedirs(d, exist_ok=True)
 
 FRAME_RE = re.compile(r'^frame_(\d{8})_(\d{6})\.jpg$')
 VIDEO_RE = re.compile(r'^timelapse_\d{8}_\d{6}(_thumb\.jpg|\.mp4)$')
+DAY_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 
 
 def load_json(path, default):
@@ -156,6 +160,14 @@ def group_frames_by_day():
     return dict(sorted(grouped.items(), reverse=True))
 
 
+def frames_by_day():
+    """Compact listing for the UI: {day: [HHMMSS, ...]} in chronological order"""
+    grouped = {}
+    for name in sorted(all_frames()):
+        grouped.setdefault(f"{name[6:10]}-{name[10:12]}-{name[12:14]}", []).append(name[15:21])
+    return grouped
+
+
 def capture_frame():
     """Capture a frame (plus a small thumbnail) from the camera into the RAM spool"""
     now = datetime.now()
@@ -241,6 +253,33 @@ def prune_local():
         remove_empty_day_dirs(base)
     if removed:
         print(f"[OK] Pruned {removed} local files older than {LOCAL_RETENTION_HOURS:g}h")
+
+
+thumb_cache_lock = threading.Lock()
+thumb_cache_busy = set()
+
+
+def cache_day_thumbs(day):
+    """Copy a whole day of thumbs from Box into RAM with one rclone call, instead of one
+    `rclone cat` per frame while the viewer scrubs through it"""
+    tmp = f"{THUMB_CACHE}/.{day}"
+    try:
+        result = rclone('copy', f"{BOX_REMOTE}/thumbs/{day}", tmp,
+                        '--transfers', '16', '--checkers', '16', timeout=1800)
+        if result.returncode == 0:
+            os.replace(tmp, f"{THUMB_CACHE}/{day}")
+            print(f"[OK] Cached thumbs for {day}")
+        else:
+            print(f"[ERR] Thumb cache for {day} failed: {result.stderr[-300:]}")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+        with thumb_cache_lock:
+            thumb_cache_busy.discard(day)
+    # Keep only the most recently viewed days
+    days = sorted((d for d in os.listdir(THUMB_CACHE) if not d.startswith('.')),
+                  key=lambda d: os.path.getmtime(f"{THUMB_CACHE}/{d}"), reverse=True)
+    for d in days[THUMB_CACHE_DAYS:]:
+        shutil.rmtree(f"{THUMB_CACHE}/{d}", ignore_errors=True)
 
 
 def spool_path(base, filename):
@@ -492,11 +531,12 @@ signal.signal(signal.SIGTERM, shutdown)
 
 @app.route('/')
 def index():
-    grouped = group_frames_by_day()
     return render_template('index.html',
-                           grouped=grouped,
+                           days=frames_by_day(),
+                           now=datetime.now().strftime('%Y%m%d%H%M%S'),
                            videos=list_videos(),
-                           frame_count=sum(len(v) for v in grouped.values()),
+                           looks=list(LOOKS),
+                           default_look=DEFAULT_LOOK,
                            interval=CAPTURE_INTERVAL,
                            camera_url=urlparse(CAMERA_URL).hostname or '')
 
@@ -547,6 +587,8 @@ def api_timelapse_status(job_id):
 
 @app.route('/api/frames')
 def api_frames():
+    if request.args.get('compact') == '1':
+        return jsonify({'days': frames_by_day(), 'now': datetime.now().strftime('%Y%m%d%H%M%S')})
     grouped = group_frames_by_day()
     return jsonify({'days': list(grouped.keys()), 'frames': {k: [f['filename'] for f in v] for k, v in grouped.items()}})
 
@@ -572,9 +614,33 @@ def serve_frame(filename):
     thumb = request.args.get('thumb') == '1'
     base, remote = (SPOOL_THUMBS, 'thumbs') if thumb else (SPOOL_FRAMES, 'frames')
     day, local = spool_path(base, filename)
+    if thumb and not os.path.exists(local):
+        local = f"{THUMB_CACHE}/{day}/{filename}"
     if os.path.exists(local):
-        return send_file(local)
+        # Frames never change once captured
+        return send_file(local, max_age=86400)
     return stream_remote(f"{remote}/{day}/{filename}", 'image/jpeg')
+
+
+@app.route('/api/thumbs/<day>/prefetch', methods=['POST'])
+def prefetch_thumbs(day):
+    """Called by the viewer when it reaches a day, so scrubbing it doesn't hit Box per frame"""
+    if not DAY_RE.match(day):
+        abort(404)
+    cached = f"{THUMB_CACHE}/{day}"
+    if os.path.isdir(cached):
+        os.utime(cached)
+        return jsonify({'status': 'cached'})
+    local = f"{SPOOL_THUMBS}/{day}"
+    total = len(frames_by_day().get(day, []))
+    if not total or (os.path.isdir(local) and len(os.listdir(local)) >= total):
+        return jsonify({'status': 'local'})
+    with thumb_cache_lock:
+        if day in thumb_cache_busy:
+            return jsonify({'status': 'loading'})
+        thumb_cache_busy.add(day)
+    threading.Thread(target=cache_day_thumbs, args=(day,), daemon=True).start()
+    return jsonify({'status': 'loading'})
 
 
 @app.route('/video/<filename>')
@@ -602,7 +668,7 @@ def delete_frames():
     count = len(all_frames())
     for path in ('frames', 'thumbs'):
         rclone('purge', f"{BOX_REMOTE}/{path}", timeout=1800)
-    for d in (SPOOL_FRAMES, SPOOL_THUMBS, SPOOL_PENDING):
+    for d in (SPOOL_FRAMES, SPOOL_THUMBS, SPOOL_PENDING, THUMB_CACHE):
         shutil.rmtree(d, ignore_errors=True)
         os.makedirs(d, exist_ok=True)
     remote_frames.invalidate()

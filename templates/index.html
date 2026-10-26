@@ -3,596 +3,1185 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Timelapse Camera</title>
+    <title>Mary Jane Timelapse</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap" rel="stylesheet">
     <style>
+        /* Grow room palette: soil darks lit by a sodium (HPS) lamp, leaf green for "alive" */
+        :root {
+            --soil: #16120e;
+            --bark: #211b16;
+            --bark-2: #2b231c;
+            --root: #3b3027;
+            --paper: #f1e8da;
+            --dust: #a8998a;
+            --sodium: #f4a63a;
+            --sodium-ink: #2a1a05;
+            --leaf: #9cc463;
+            --rust: #e0564a;
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { color-scheme: dark; }
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #1a1a2e;
-            color: #eee;
-            padding: 20px;
+            font-family: 'Bricolage Grotesque', system-ui, sans-serif;
+            background: var(--soil);
+            color: var(--paper);
+            line-height: 1.5;
+            -webkit-font-smoothing: antialiased;
         }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-        h1 {
-            color: #00d4ff;
-            margin-bottom: 20px;
-            text-align: center;
-        }
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 30px;
-        }
-        .stat-card {
-            background: #16213e;
-            padding: 20px;
-            border-radius: 10px;
-            text-align: center;
-            border: 1px solid #0f3460;
-        }
-        .stat-card h3 {
-            color: #e94560;
-            font-size: 14px;
-            margin-bottom: 5px;
-        }
-        .stat-card p {
-            font-size: 24px;
-            font-weight: bold;
-        }
-        .controls {
-            background: #16213e;
-            padding: 20px;
-            border-radius: 10px;
-            margin-bottom: 30px;
-            border: 1px solid #0f3460;
-        }
-        .controls h2 {
-            color: #00d4ff;
-            margin-bottom: 15px;
-        }
-        .btn-group {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            margin-bottom: 15px;
-        }
-        button {
-            padding: 12px 24px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: bold;
-            transition: all 0.3s;
-        }
-        .btn-primary {
-            background: #00d4ff;
-            color: #1a1a2e;
-        }
-        .btn-primary:hover {
-            background: #00a8cc;
-        }
-        .btn-success {
-            background: #28a745;
-            color: white;
-        }
-        .btn-success:hover {
-            background: #218838;
-        }
-        .btn-danger {
-            background: #e94560;
-            color: white;
-        }
-        .btn-danger:hover {
-            background: #c73e54;
-        }
-        .config-row {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-        input[type="number"], input[type="date"] {
-            padding: 8px;
-            border-radius: 5px;
-            border: 1px solid #0f3460;
-            background: #1a1a2e;
-            color: #eee;
-        }
-        .status {
-            padding: 10px;
-            border-radius: 5px;
-            margin-bottom: 15px;
-            display: none;
-        }
-        .job-progress {
-            display: none;
-            margin-top: 15px;
-        }
-        .job-progress.open {
-            display: block;
-        }
-        .job-progress-text {
-            font-size: 0.9em;
-            margin-bottom: 6px;
-        }
-        .job-progress-track {
-            height: 14px;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 7px;
-            overflow: hidden;
-        }
-        .job-progress-fill {
-            height: 100%;
-            width: 0;
-            background: #28a745;
-            transition: width 0.8s ease;
-        }
-        .status.success {
-            background: #28a745;
-            display: block;
-        }
-        .status.error {
-            background: #e94560;
-            display: block;
-        }
-        .camera-info {
-            font-size: 12px;
-            color: #888;
-            margin-top: 10px;
-        }
-        
-        /* Tabla por día */
-        .day-section {
-            background: #16213e;
-            border-radius: 10px;
-            margin-bottom: 20px;
-            border: 1px solid #0f3460;
-            overflow: hidden;
-        }
-        .day-header {
-            background: #0f3460;
-            padding: 15px 20px;
-            cursor: pointer;
+        body.lock { overflow: hidden; }
+        button, input, select { font: inherit; color: inherit; }
+        button { cursor: pointer; border: 0; background: none; }
+        :focus-visible { outline: 2px solid var(--sodium); outline-offset: 2px; }
+        svg { display: block; }
+
+        .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 16px 72px; }
+
+        /* Header */
+        .top {
             display: flex;
             justify-content: space-between;
-            align-items: center;
-            transition: background 0.3s;
-        }
-        .day-header:hover {
-            background: #1a4a7a;
-        }
-        .day-header h3 {
-            color: #00d4ff;
-            font-size: 16px;
-        }
-        .day-header .count {
-            background: #e94560;
-            padding: 4px 12px;
-            border-radius: 15px;
-            font-size: 12px;
-            font-weight: bold;
-        }
-        .day-content {
-            display: none;
-            padding: 15px;
-        }
-        .day-content.open {
-            display: block;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        th, td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #0f3460;
-        }
-        th {
-            color: #00d4ff;
-            font-weight: bold;
-            font-size: 12px;
-            text-transform: uppercase;
-        }
-        td {
-            font-size: 14px;
-        }
-        .frame-thumb {
-            width: 80px;
-            height: 60px;
-            object-fit: cover;
-            border-radius: 4px;
-            cursor: pointer;
-            transition: transform 0.3s;
-        }
-        .frame-thumb:hover {
-            transform: scale(1.1);
-        }
-        .lightbox {
-            display: none;
-            position: fixed;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            background: rgba(0,0,0,0.9);
-            z-index: 1000;
-            justify-content: center;
-            align-items: center;
-            cursor: pointer;
-        }
-        .lightbox img {
-            max-width: 90%;
-            max-height: 90%;
-        }
-        .lightbox.open {
-            display: flex;
-        }
-        
-        /* Videos */
-        .video-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 15px;
-        }
-        .video-card {
-            background: #1a1a2e;
-            border-radius: 8px;
-            overflow: hidden;
-            border: 1px solid #0f3460;
-            transition: border-color 0.3s;
-        }
-        .video-card:hover {
-            border-color: #00d4ff;
-        }
-        .video-card .thumb-wrap {
-            position: relative;
-            width: 100%;
-            aspect-ratio: 16 / 9;
-            background: #0f3460;
-            overflow: hidden;
-        }
-        .video-card .thumb-wrap img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-        .video-card .thumb-wrap .no-thumb {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100%;
-            color: #555;
-            font-size: 16px;
-        }
-        .video-card .duration-badge {
-            position: absolute;
-            bottom: 8px;
-            right: 8px;
-            background: rgba(0,0,0,0.8);
-            color: #fff;
-            padding: 3px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: bold;
-        }
-        .video-card .card-body {
-            padding: 12px;
-        }
-        .video-card .card-body p {
-            font-size: 12px;
-            color: #888;
-            margin-bottom: 10px;
-            word-break: break-all;
-        }
-        .video-card .btn-download {
-            display: block;
-            width: 100%;
-            padding: 10px;
-            background: #00d4ff;
-            color: #1a1a2e;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: bold;
-            text-align: center;
-            text-decoration: none;
-            transition: background 0.3s;
-        }
-        .video-card .btn-download:hover {
-            background: #00a8cc;
-        }
-        
-        /* Formulario timelapse */
-        .timelapse-form {
-            display: flex;
-            gap: 15px;
             align-items: flex-end;
+            gap: 12px 24px;
             flex-wrap: wrap;
-            margin-bottom: 15px;
-            padding: 15px;
-            background: #1a1a2e;
-            border-radius: 8px;
+            margin-bottom: 20px;
         }
-        .form-group {
+        .top h1 {
+            font-size: clamp(2.2rem, 6vw, 3.4rem);
+            font-weight: 800;
+            font-variation-settings: "opsz" 96;
+            letter-spacing: -0.035em;
+            line-height: 0.95;
+        }
+        .top .sub { color: var(--dust); margin-top: 8px; }
+        .live { display: flex; align-items: center; gap: 10px; color: var(--dust); font-size: 0.95rem; }
+        .live .dot {
+            width: 9px; height: 9px; border-radius: 50%;
+            background: var(--leaf);
+            animation: pulse 2.4s infinite;
+        }
+        .live.stale .dot { background: var(--rust); animation: none; }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(156, 196, 99, 0.55); }
+            70% { box-shadow: 0 0 0 9px rgba(156, 196, 99, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(156, 196, 99, 0); }
+        }
+
+        /* Viewer */
+        .viewer-slot { margin-bottom: 40px; }
+        .viewer {
+            background: var(--bark);
+            border: 1px solid var(--root);
+            border-radius: 18px;
+            overflow: hidden;
             display: flex;
             flex-direction: column;
-            gap: 5px;
         }
-        .form-group label {
-            font-size: 12px;
-            color: #888;
+        .viewer.expanded {
+            position: fixed;
+            inset: 0;
+            z-index: 50;
+            border: 0;
+            border-radius: 0;
+            background: #000;
         }
-        .toggle-icon {
-            font-size: 12px;
-            transition: transform 0.3s;
+        .stage {
+            position: relative;
+            aspect-ratio: 16 / 9;
+            background: #000;
+            overflow: hidden;
+            cursor: grab;
+            touch-action: pan-y;
+            user-select: none;
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent;
         }
-        .toggle-icon.open {
-            transform: rotate(90deg);
+        .stage:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--sodium); }
+        .stage.scrubbing { cursor: grabbing; }
+        .viewer.expanded .stage { aspect-ratio: auto; flex: 1; min-height: 0; touch-action: none; }
+        .stage .layer {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            pointer-events: none;
+            -webkit-user-drag: none;
+        }
+        .stage .layer:not([src]) { visibility: hidden; }
+        .stage .full { opacity: 0; transition: opacity 0.25s; }
+        .stage .full.on { opacity: 1; }
+        .osd {
+            position: absolute;
+            left: 0; right: 0; bottom: 0;
+            padding: 56px 20px 16px;
+            background: linear-gradient(transparent, rgba(12, 8, 4, 0.8));
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 12px;
+            pointer-events: none;
+        }
+        .osd-time {
+            display: block;
+            font-size: clamp(2.2rem, 7vw, 4.2rem);
+            font-weight: 700;
+            font-variation-settings: "opsz" 96;
+            font-variant-numeric: tabular-nums;
+            letter-spacing: -0.02em;
+            line-height: 0.9;
+        }
+        .osd-date { display: block; margin-top: 6px; color: rgba(241, 232, 218, 0.8); }
+        .osd-pos { color: rgba(241, 232, 218, 0.7); font-size: 0.9rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .spinner {
+            position: absolute;
+            top: 14px; right: 14px;
+            width: 20px; height: 20px;
+            border: 2px solid rgba(241, 232, 218, 0.25);
+            border-top-color: var(--sodium);
+            border-radius: 50%;
+            opacity: 0;
+            transition: opacity 0.2s;
+            animation: spin 0.8s linear infinite;
+        }
+        .stage.loading .spinner { opacity: 1; transition-delay: 0.15s; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .hint {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 18px;
+            border-radius: 999px;
+            background: rgba(12, 8, 4, 0.72);
+            white-space: nowrap;
+            pointer-events: none;
+            transition: opacity 0.4s;
+        }
+        .hint svg { width: 22px; height: 22px; color: var(--sodium); }
+        .hint.gone { opacity: 0; }
+        .stage-empty {
+            position: absolute;
+            inset: 0;
+            display: none;
+            place-items: center;
+            padding: 24px;
+            text-align: center;
+            color: var(--dust);
+        }
+        .viewer.empty .stage-empty { display: grid; }
+        .viewer.empty .osd, .viewer.empty .bar, .viewer.empty .hint { display: none; }
+
+        .bar { display: grid; gap: 8px; padding: 12px 16px 14px; }
+        .viewer.expanded .bar { background: var(--bark); }
+        .transport { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .transport .spacer { flex: 1; }
+        .icon-btn {
+            width: 42px; height: 42px;
+            display: grid;
+            place-items: center;
+            border-radius: 50%;
+            border: 1px solid var(--root);
+            color: var(--paper);
+            text-decoration: none;
+        }
+        .icon-btn:hover { background: var(--bark-2); }
+        .icon-btn svg { width: 20px; height: 20px; }
+        .play-btn {
+            height: 42px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0 20px 0 14px;
+            border-radius: 999px;
+            background: var(--sodium);
+            color: var(--sodium-ink);
+            font-weight: 700;
+        }
+        .play-btn svg { width: 20px; height: 20px; }
+        .play-btn .i-pause, .play-btn.on .i-play { display: none; }
+        .play-btn.on .i-pause { display: block; }
+        .expand-btn .i-collapse, .viewer.expanded .expand-btn .i-expand { display: none; }
+        .viewer.expanded .expand-btn .i-collapse { display: block; }
+        .speed {
+            height: 42px;
+            padding: 0 10px;
+            border-radius: 999px;
+            border: 1px solid var(--root);
+            background: var(--bark);
+        }
+        .track { position: relative; height: 30px; }
+        .ticks span {
+            position: absolute;
+            top: 7px; bottom: 7px;
+            width: 1px;
+            background: rgba(168, 153, 138, 0.45);
+        }
+        .range {
+            position: relative;
+            width: 100%;
+            height: 30px;
+            background: transparent;
+            cursor: pointer;
+            -webkit-appearance: none;
+            appearance: none;
+        }
+        .range::-webkit-slider-runnable-track {
+            height: 4px;
+            border-radius: 2px;
+            background: linear-gradient(var(--sodium), var(--sodium)) 0 / var(--p, 0%) 100% no-repeat, var(--root);
+        }
+        .range::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px; height: 20px;
+            margin-top: -8px;
+            border-radius: 50%;
+            border: 4px solid var(--bark);
+            background: var(--sodium);
+        }
+        .range::-moz-range-track { height: 4px; border-radius: 2px; background: var(--root); }
+        .range::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--sodium); }
+        .range::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; border: 4px solid var(--bark); background: var(--sodium); }
+        .range:focus-visible { outline: none; }
+        .range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 2px var(--sodium); }
+        .keys { color: var(--dust); font-size: 0.85rem; }
+
+        /* Lower layout */
+        .cols { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 40px; align-items: start; }
+        @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+        h2 {
+            font-size: 1.45rem;
+            font-weight: 700;
+            font-variation-settings: "opsz" 48;
+            letter-spacing: -0.015em;
+            line-height: 1.2;
+        }
+        .section-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+        .muted { color: var(--dust); }
+
+        /* Days */
+        .day { padding: 16px 0 18px; border-top: 1px solid var(--root); }
+        .day-head { display: flex; align-items: baseline; gap: 6px 14px; flex-wrap: wrap; margin-bottom: 12px; }
+        .day-title { font-size: 1.1rem; font-weight: 700; text-align: left; }
+        .day-title::first-letter { text-transform: uppercase; }
+        .day-title:hover { color: var(--sodium); }
+        .day-meta { color: var(--dust); font-size: 0.92rem; }
+        .text-btn { margin-left: auto; color: var(--sodium); font-weight: 600; font-size: 0.92rem; }
+        .text-btn:hover { text-decoration: underline; }
+        .strip { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+        @media (max-width: 600px) { .strip { grid-template-columns: repeat(3, 1fr); } }
+        .strip button {
+            position: relative;
+            aspect-ratio: 16 / 9;
+            border-radius: 8px;
+            overflow: hidden;
+            background: var(--bark-2);
+        }
+        .strip img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.3s; }
+        .strip button:hover img { transform: scale(1.06); }
+        .strip span {
+            position: absolute;
+            left: 6px; bottom: 4px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+            font-variant-numeric: tabular-nums;
+        }
+        .more { margin-top: 8px; }
+
+        /* Side panels */
+        aside { display: grid; gap: 20px; }
+        .panel { background: var(--bark); border: 1px solid var(--root); border-radius: 14px; padding: 20px; }
+        .panel h2 { font-size: 1.2rem; margin-bottom: 4px; }
+        .panel > p { color: var(--dust); font-size: 0.92rem; margin-bottom: 16px; }
+        .field { display: grid; gap: 6px; }
+        .field label { color: var(--dust); font-size: 0.85rem; }
+        .row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+        .row .field { flex: 1; min-width: 120px; }
+        .stack { display: grid; gap: 14px; }
+        input[type="number"], input[type="date"], .panel select {
+            height: 42px;
+            width: 100%;
+            padding: 0 12px;
+            border-radius: 10px;
+            border: 1px solid var(--root);
+            background: var(--soil);
+        }
+        .btn {
+            height: 42px;
+            padding: 0 18px;
+            border-radius: 999px;
+            border: 1px solid var(--root);
+            background: var(--bark-2);
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .btn:hover { border-color: var(--dust); }
+        .btn:disabled { opacity: 0.55; cursor: progress; }
+        .btn-accent { background: var(--sodium); border-color: transparent; color: var(--sodium-ink); }
+        .btn-accent:hover { border-color: transparent; background: #f7b65a; }
+        .btn-danger { background: transparent; border-color: rgba(224, 86, 74, 0.45); color: var(--rust); }
+        .btn-danger:hover { border-color: var(--rust); }
+        .btn-block { width: 100%; }
+        .danger { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--root); }
+        .job-progress { display: none; margin-top: 14px; }
+        .job-progress.open { display: block; }
+        .job-progress-text { font-size: 0.9rem; color: var(--dust); margin-bottom: 6px; }
+        .job-progress-track { height: 8px; background: var(--root); border-radius: 4px; overflow: hidden; }
+        .job-progress-fill { height: 100%; width: 0; background: var(--leaf); transition: width 0.8s ease; }
+
+        /* Videos */
+        .videos-section { margin-top: 48px; }
+        .video-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; }
+        .video-card { background: var(--bark); border: 1px solid var(--root); border-radius: 14px; overflow: hidden; }
+        .video-card .thumb-wrap { position: relative; aspect-ratio: 16 / 9; background: var(--bark-2); }
+        .video-card .thumb-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .duration-badge {
+            position: absolute;
+            right: 8px; bottom: 8px;
+            padding: 2px 8px;
+            border-radius: 6px;
+            background: rgba(12, 8, 4, 0.8);
+            font-size: 0.85rem;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
+        .video-card .card-body { padding: 12px 14px 14px; }
+        .video-card .card-body p { margin-bottom: 12px; }
+        .video-card .actions { display: flex; gap: 8px; }
+        .video-card .actions > * { flex: 1; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+
+        dialog.player {
+            margin: auto;
+            width: min(1100px, 94vw);
+            max-width: none;
+            border: 0;
+            border-radius: 14px;
+            overflow: hidden;
+            background: #000;
+            color: var(--paper);
+        }
+        dialog.player::backdrop { background: rgba(12, 8, 4, 0.88); }
+        dialog.player video { display: block; width: 100%; max-height: 82vh; background: #000; }
+
+        .toast {
+            position: fixed;
+            left: 50%; bottom: 24px;
+            z-index: 60;
+            max-width: calc(100vw - 32px);
+            padding: 12px 20px;
+            border-radius: 999px;
+            background: var(--paper);
+            color: var(--soil);
+            font-weight: 600;
+            opacity: 0;
+            transform: translate(-50%, 16px);
+            transition: opacity 0.25s, transform 0.25s;
+            pointer-events: none;
+        }
+        .toast.show { opacity: 1; transform: translate(-50%, 0); }
+        .toast.error { background: var(--rust); color: #fff; }
+
+        @media (max-width: 600px) {
+            .osd { padding: 32px 12px 10px; }
+            .osd-time { font-size: 1.9rem; }
+            .osd-date, .osd-pos { font-size: 0.8rem; }
+            .bar { padding: 10px 12px 12px; }
+            .keys, #v-prev-day, #v-next-day, #v-play-label, .viewer:not(.expanded) .speed { display: none; }
+            .icon-btn, .play-btn, .speed { height: 40px; }
+            .icon-btn { width: 40px; }
+            .play-btn { padding: 0 14px; }
+            .viewer.expanded .osd-time { font-size: 2.6rem; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation: none !important; transition: none !important; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>📷 Timelapse - Imou IPC-C22E-A</h1>
-        
-        <div class="stats">
-            <div class="stat-card">
-                <h3>Frames Capturados</h3>
-                <p id="frame-count">{{ frame_count }}</p>
-            </div>
-            <div class="stat-card">
-                <h3>Intervalo</h3>
-                <p id="interval-display">{{ interval }}s</p>
-            </div>
-            <div class="stat-card">
-                <h3>Días</h3>
-                <p id="days-count">{{ grouped.keys()|list|length }}</p>
-            </div>
-        </div>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+        <symbol id="i-play" viewBox="0 0 24 24"><path fill="currentColor" d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z"/></symbol>
+        <symbol id="i-pause" viewBox="0 0 24 24"><rect fill="currentColor" x="6" y="5" width="4" height="14" rx="1"/><rect fill="currentColor" x="14" y="5" width="4" height="14" rx="1"/></symbol>
+        <symbol id="i-prev" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M15 5l-7 7 7 7"/></symbol>
+        <symbol id="i-next" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></symbol>
+        <symbol id="i-prev-day" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M12 5l-7 7 7 7M19 5l-7 7 7 7"/></symbol>
+        <symbol id="i-next-day" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M5 5l7 7-7 7M12 5l7 7-7 7"/></symbol>
+        <symbol id="i-download" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></symbol>
+        <symbol id="i-expand" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></symbol>
+        <symbol id="i-collapse" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></symbol>
+        <symbol id="i-swipe" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M3 8h7M3 8l3-3M3 8l3 3M21 8h-7m7 0-3-3m3 3-3 3M12 13v7"/></symbol>
+    </svg>
 
-        <div class="controls">
-            <h2>Controles</h2>
-            <div class="status" id="status-msg"></div>
-            
-            <div class="btn-group">
-                <button class="btn-primary" onclick="captureNow()">📸 Capturar Ahora</button>
-                <button class="btn-danger" onclick="deleteFrames()">🗑️ Borrar Todo</button>
+    <div class="wrap">
+        <header class="top">
+            <div>
+                <h1>Mary Jane</h1>
+                <p class="sub"><span id="summary"></span>{% if camera_url %}, cámara Imou en {{ camera_url }}{% endif %}</p>
             </div>
-            
-            <div class="config-row">
-                <label>Intervalo de captura (segundos):</label>
-                <input type="number" id="interval" value="{{ interval }}" min="60">
-                <button class="btn-primary" onclick="updateInterval()">Actualizar</button>
-            </div>
-            
-            <div class="camera-info">
-                Cámara: {{ camera_url }}
-            </div>
-        </div>
+            <div class="live" id="live"><span class="dot"></span><span id="live-text"></span></div>
+        </header>
 
-        <!-- Generar Timelapse -->
-        <div class="controls">
-            <h2>🎬 Generar Timelapse</h2>
-            <div class="timelapse-form">
-                <div class="form-group">
-                    <label>Desde (opcional)</label>
-                    <input type="date" id="date-from">
-                </div>
-                <div class="form-group">
-                    <label>Hasta (opcional)</label>
-                    <input type="date" id="date-to">
-                </div>
-                <button class="btn-success" onclick="createTimelapse()">Generar Video</button>
-            </div>
-            <div class="job-progress" id="job-progress">
-                <div class="job-progress-text" id="job-progress-text"></div>
-                <div class="job-progress-track"><div class="job-progress-fill" id="job-progress-fill"></div></div>
-            </div>
-        </div>
-
-        <!-- Frames por Día -->
-        <div class="controls">
-            <h2>📸 Frames por Día</h2>
-            <div id="frames-container">
-                {% for day, frames in grouped.items() %}
-                <div class="day-section">
-                    <div class="day-header" onclick="toggleDay('{{ day }}')">
-                        <h3>{{ day }} | {{ frames|length }} frames</h3>
-                        <span class="toggle-icon" id="icon-{{ day }}">▶</span>
+        <!-- Frame viewer: drag/swipe to scrub through time -->
+        <div class="viewer-slot" id="viewer-slot">
+            <section class="viewer" id="viewer" aria-label="Visor de frames">
+                <div class="stage" id="stage" tabindex="0" aria-label="Frame actual. Arrastrá o usá las flechas para recorrer">
+                    <img class="layer" id="v-thumb" alt="">
+                    <img class="layer full" id="v-full" alt="">
+                    <div class="osd">
+                        <div>
+                            <span class="osd-time" id="v-time">--:--</span>
+                            <span class="osd-date" id="v-date"></span>
+                        </div>
+                        <span class="osd-pos" id="v-pos"></span>
                     </div>
-                    <div class="day-content" id="day-{{ day }}">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Preview</th>
-                                    <th>Hora</th>
-                                    <th>Archivo</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for frame in frames %}
-                                <tr>
-                                    <td>
-                                        <img src="/frame/{{ frame.filename }}?thumb=1" 
-                                             class="frame-thumb" loading="lazy"
-                                             onclick="showLightbox('/frame/{{ frame.filename }}', event)"
-                                             alt="{{ frame.time }}">
-                                    </td>
-                                    <td>{{ frame.time }}</td>
-                                    <td>{{ frame.filename }}</td>
-                                </tr>
+                    <div class="spinner"></div>
+                    <div class="hint gone" id="v-hint"><svg><use href="#i-swipe"/></svg>Deslizá para recorrer el tiempo</div>
+                    <div class="stage-empty">Todavía no hay frames. La primera captura llega en menos de un minuto, o tocá Capturar ahora.</div>
+                </div>
+                <div class="bar">
+                    <div class="transport">
+                        <button class="icon-btn" id="v-prev-day" title="Día anterior (↑)" aria-label="Día anterior"><svg><use href="#i-prev-day"/></svg></button>
+                        <button class="icon-btn" id="v-prev" title="Frame anterior (←)" aria-label="Frame anterior"><svg><use href="#i-prev"/></svg></button>
+                        <button class="play-btn" id="v-play" title="Reproducir (espacio)">
+                            <svg class="i-play"><use href="#i-play"/></svg><svg class="i-pause"><use href="#i-pause"/></svg>
+                            <span id="v-play-label">Reproducir</span>
+                        </button>
+                        <button class="icon-btn" id="v-next" title="Frame siguiente (→)" aria-label="Frame siguiente"><svg><use href="#i-next"/></svg></button>
+                        <button class="icon-btn" id="v-next-day" title="Día siguiente (↓)" aria-label="Día siguiente"><svg><use href="#i-next-day"/></svg></button>
+                        <span class="spacer"></span>
+                        <select class="speed" id="v-speed" aria-label="Velocidad">
+                            <option value="6">6 fps</option>
+                            <option value="12" selected>12 fps</option>
+                            <option value="24">24 fps</option>
+                            <option value="48">48 fps</option>
+                        </select>
+                        <a class="icon-btn" id="v-download" title="Descargar este frame" aria-label="Descargar este frame"><svg><use href="#i-download"/></svg></a>
+                        <button class="icon-btn expand-btn" id="v-expand" title="Pantalla completa (F)" aria-label="Pantalla completa">
+                            <svg class="i-expand"><use href="#i-expand"/></svg><svg class="i-collapse"><use href="#i-collapse"/></svg>
+                        </button>
+                    </div>
+                    <div class="track">
+                        <div class="ticks" id="v-ticks"></div>
+                        <input type="range" class="range" id="v-range" min="0" max="0" value="0" aria-label="Línea de tiempo">
+                    </div>
+                    <div class="keys">← → un frame, Shift ×10, ↑ ↓ día, espacio reproduce, F pantalla completa</div>
+                </div>
+            </section>
+        </div>
+
+        <div class="cols">
+            <section>
+                <div class="section-head">
+                    <h2>Días</h2>
+                    <span class="muted" id="days-count"></span>
+                </div>
+                <div id="days"></div>
+            </section>
+
+            <aside>
+                <div class="panel">
+                    <h2>Cámara</h2>
+                    <p>Las capturas se guardan en Box.</p>
+                    <div class="stack">
+                        <button class="btn btn-accent btn-block" id="capture-btn" onclick="captureNow()">Capturar ahora</button>
+                        <div class="row">
+                            <div class="field">
+                                <label for="interval">Capturar cada (segundos, mínimo 60)</label>
+                                <input type="number" id="interval" value="{{ interval }}" min="60">
+                            </div>
+                            <button class="btn" onclick="updateInterval()">Guardar</button>
+                        </div>
+                    </div>
+                    <div class="danger">
+                        <button class="btn btn-danger btn-block" onclick="deleteFrames()">Borrar todos los frames</button>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h2>Generar timelapse</h2>
+                    <p>Sin fechas usa todos los frames.</p>
+                    <div class="stack">
+                        <div class="row">
+                            <div class="field">
+                                <label for="date-from">Desde</label>
+                                <input type="date" id="date-from">
+                            </div>
+                            <div class="field">
+                                <label for="date-to">Hasta</label>
+                                <input type="date" id="date-to">
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label for="look">Estilo</label>
+                            <select id="look">
+                                {% for l in looks %}
+                                <option value="{{ l }}" {% if l == default_look %}selected{% endif %}>{{ {'plantas': 'Plantas (nítido, verdes vivos)', 'natural': 'Natural (sin retoque)', 'cinematic': 'Cine', 'cinemascope': 'Cinemascope (2.39:1)'}.get(l, l) }}</option>
                                 {% endfor %}
-                            </tbody>
-                        </table>
+                            </select>
+                        </div>
+                        <button class="btn btn-accent btn-block" id="timelapse-btn" onclick="createTimelapse()">Generar video</button>
+                    </div>
+                    <div class="job-progress" id="job-progress">
+                        <div class="job-progress-text" id="job-progress-text"></div>
+                        <div class="job-progress-track"><div class="job-progress-fill" id="job-progress-fill"></div></div>
                     </div>
                 </div>
-                {% endfor %}
-            </div>
+            </aside>
         </div>
 
-        <!-- Videos -->
-        <div class="controls">
-            <h2>🎥 Videos Generados</h2>
-            <div class="btn-group">
-                <button class="btn-danger" onclick="deleteVideos()">Borrar Videos</button>
+        <section class="videos-section">
+            <div class="section-head">
+                <h2>Videos generados</h2>
+                <button class="text-btn" onclick="deleteVideos()">Borrar videos</button>
             </div>
-            <div class="video-grid" id="video-grid">
-                {% for v in videos %}
-                <div class="video-card">
-                    <div class="thumb-wrap">
-                        {% if v.has_thumb %}
-                        <img src="/thumb/{{ v.filename.replace('.mp4', '_thumb.jpg') }}" alt="{{ v.filename }}">
-                        {% else %}
-                        <div class="no-thumb">🎬</div>
-                        {% endif %}
-                        <span class="duration-badge">{{ v.duration }}</span>
-                    </div>
-                    <div class="card-body">
-                        <p>{{ v.filename }}</p>
-                        <a class="btn-download" href="/video/{{ v.filename }}" download>⬇ Descargar</a>
-                    </div>
-                </div>
-                {% endfor %}
-            </div>
-        </div>
+            <p class="muted" style="margin:-6px 0 16px">Quedan en el servidor hasta que se reinicie; descargalos para guardarlos.</p>
+            <div class="video-grid" id="video-grid"></div>
+        </section>
     </div>
 
-    <!-- Lightbox -->
-    <div class="lightbox" id="lightbox" onclick="closeLightbox()">
-        <img id="lightbox-img" src="">
-    </div>
+    <dialog class="player" id="player">
+        <video id="player-video" controls playsinline></video>
+    </dialog>
 
+    <div class="toast" id="toast" role="status"></div>
+
+    <script id="frames-data" type="application/json">{{ days|tojson }}</script>
+    <script id="videos-data" type="application/json">{{ videos|tojson }}</script>
     <script>
+        const $ = id => document.getElementById(id);
+        const fmtN = n => n.toLocaleString('es-AR');
+        let captureInterval = {{ interval }};
+
+        // ---- toast ---------------------------------------------------------
+
+        let toastTimer;
         function showStatus(msg, isError) {
-            const el = document.getElementById('status-msg');
+            const el = $('toast');
             el.textContent = msg;
-            el.className = 'status ' + (isError ? 'error' : 'success');
-            setTimeout(() => el.className = 'status', 3000);
+            el.className = 'toast show' + (isError ? ' error' : '');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => el.className = 'toast' + (isError ? ' error' : ''), 3200);
         }
 
-        function toggleDay(day) {
-            const content = document.getElementById('day-' + day);
-            const icon = document.getElementById('icon-' + day);
-            content.classList.toggle('open');
-            icon.classList.toggle('open');
-            icon.textContent = content.classList.contains('open') ? '▼' : '▶';
+        // ---- frames --------------------------------------------------------
+        // The server sends {day: [HHMMSS, ...]}; filenames are rebuilt from it
+
+        let frames = [];     // [{name, day, time}] chronological
+        let dayList = [];    // days, ascending
+        let dayStart = {};   // day -> index of its first frame
+        let serverOffset = 0; // server clock minus browser clock (ms); the container may run in another TZ
+
+        function parseStamp(s) {
+            return new Date(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8), +s.slice(8, 10), +s.slice(10, 12), +s.slice(12, 14));
         }
 
-        function showLightbox(src, event) {
-            event.stopPropagation();
-            document.getElementById('lightbox-img').src = src;
-            document.getElementById('lightbox').classList.add('open');
+        function setFrames(days, now) {
+            frames = [];
+            dayStart = {};
+            dayList = Object.keys(days).sort();
+            for (const day of dayList) {
+                dayStart[day] = frames.length;
+                const compact = day.replace(/-/g, '');
+                for (const t of days[day]) {
+                    frames.push({name: `frame_${compact}_${t}.jpg`, day, time: `${t.slice(0, 2)}:${t.slice(2, 4)}:${t.slice(4, 6)}`});
+                }
+            }
+            if (now) serverOffset = parseStamp(now) - Date.now();
         }
 
-        function closeLightbox() {
-            document.getElementById('lightbox').classList.remove('open');
+        function dayEnd(day) {
+            const next = dayList[dayList.indexOf(day) + 1];
+            return (next ? dayStart[next] : frames.length) - 1;
         }
+
+        function frameStamp(f) {
+            return parseStamp(f.day.replace(/-/g, '') + f.time.replace(/:/g, ''));
+        }
+
+        function formatDay(day) {
+            const [y, m, d] = day.split('-').map(Number);
+            const opts = {weekday: 'long', day: 'numeric', month: 'long'};
+            if (y !== new Date().getFullYear()) opts.year = 'numeric';
+            return new Date(y, m - 1, d).toLocaleDateString('es-AR', opts);
+        }
+
+        const thumbUrl = f => `/frame/${f.name}?thumb=1`;
+        const fullUrl = f => `/frame/${f.name}`;
+
+        // ---- image loader --------------------------------------------------
+        // Preloads thumbs with limited concurrency; request() replaces the queue so
+        // the frames closest to where the viewer is go first
+
+        const loader = {
+            max: 6,
+            active: 0,
+            queue: [],
+            state: new Map(), // url -> 'loading' | Image | false
+            onload: null,
+            ready(url) { return this.state.get(url) instanceof Image; },
+            failed(url) { return this.state.get(url) === false; },
+            request(urls) {
+                this.queue = urls.filter(u => !this.state.has(u));
+                this.pump();
+            },
+            pump() {
+                while (this.active < this.max && this.queue.length) {
+                    const url = this.queue.shift();
+                    if (this.state.has(url)) continue;
+                    this.active++;
+                    this.state.set(url, 'loading');
+                    const img = new Image();
+                    const done = ok => {
+                        this.active--;
+                        this.state.set(url, ok ? img : false);
+                        // Let failed frames be retried later
+                        if (!ok) setTimeout(() => this.state.get(url) === false && this.state.delete(url), 20000);
+                        this.trim();
+                        if (this.onload) this.onload(url, ok);
+                        this.pump();
+                    };
+                    img.onload = () => (img.decode ? img.decode().catch(() => {}) : Promise.resolve()).then(() => done(true));
+                    img.onerror = () => done(false);
+                    img.src = url;
+                }
+            },
+            trim() {
+                if (this.state.size <= 3000) return;
+                for (const [url, s] of this.state) {
+                    if (this.state.size <= 2400) break;
+                    if (s !== 'loading') this.state.delete(url);
+                }
+            }
+        };
+
+        // ---- viewer --------------------------------------------------------
+
+        const viewer = $('viewer'), stage = $('stage');
+        const thumbEl = $('v-thumb'), fullEl = $('v-full'), range = $('v-range');
+        const V = {idx: -1, name: null, dir: 1, playing: false, playTimer: null, fullTimer: null,
+                   inertia: null, drag: null, wheel: 0, expanded: false};
+        const prefetchedDays = new Set();
+
+        function busy() {
+            return V.playing || V.inertia || (V.drag && V.drag.moved);
+        }
+
+        function show(i) {
+            if (!frames.length) return;
+            i = Math.max(0, Math.min(frames.length - 1, Math.round(i)));
+            if (V.idx >= 0 && i !== V.idx) V.dir = i > V.idx ? 1 : -1;
+            const f = frames[i];
+            const changed = f.name !== V.name;
+            V.idx = i;
+            V.name = f.name;
+            if (!changed) return;
+
+            $('v-time').textContent = f.time.slice(0, 5);
+            $('v-date').textContent = formatDay(f.day);
+            $('v-pos').textContent = `${fmtN(i + 1)} de ${fmtN(frames.length)}`;
+            range.value = i;
+            range.style.setProperty('--p', (frames.length > 1 ? i / (frames.length - 1) * 100 : 0) + '%');
+            const dl = $('v-download');
+            dl.href = fullUrl(f);
+            dl.download = f.name;
+
+            fullEl.classList.remove('on');
+            paint();
+            prefetchAround();
+            prefetchDay(f.day);
+            scheduleFull();
+        }
+
+        function paint() {
+            const url = thumbUrl(frames[V.idx]);
+            if (loader.ready(url)) {
+                if (thumbEl.getAttribute('src') !== url) thumbEl.src = url;
+                stage.classList.remove('loading');
+            } else {
+                stage.classList.add('loading');
+            }
+        }
+
+        loader.onload = (url, ok) => {
+            const f = frames[V.idx];
+            if (!f || url !== thumbUrl(f)) return;
+            if (ok) paint();
+            else scheduleFull(0); // no thumb: go straight to the full frame
+        };
+
+        // Full resolution only once the viewer stops moving
+        function scheduleFull(delay = 300) {
+            clearTimeout(V.fullTimer);
+            if (busy() || !frames.length) return;
+            V.fullTimer = setTimeout(() => {
+                const f = frames[V.idx];
+                const img = new Image();
+                img.onload = () => {
+                    if (frames[V.idx] !== f || busy()) return;
+                    fullEl.src = img.src;
+                    fullEl.classList.add('on');
+                    stage.classList.remove('loading');
+                };
+                img.src = fullUrl(f);
+            }, delay);
+        }
+
+        function prefetchAround() {
+            const ahead = V.playing ? 90 : 40, behind = 12, urls = [];
+            for (let k = 0; k <= ahead; k++) {
+                const a = V.idx + V.dir * k;
+                if (a >= 0 && a < frames.length) urls.push(thumbUrl(frames[a]));
+                const b = V.idx - V.dir * k;
+                if (k && k <= behind && b >= 0 && b < frames.length) urls.push(thumbUrl(frames[b]));
+            }
+            loader.request(urls);
+        }
+
+        // Ask the server to pull the whole day of thumbs from Box into RAM
+        function prefetchDay(day) {
+            if (prefetchedDays.has(day)) return;
+            prefetchedDays.add(day);
+            fetch(`/api/thumbs/${day}/prefetch`, {method: 'POST'}).catch(() => prefetchedDays.delete(day));
+        }
+
+        function step(n) {
+            pause();
+            show(V.idx + n);
+        }
+
+        function jumpDay(delta) {
+            pause();
+            const d = dayList.indexOf(frames[V.idx].day);
+            // Going back from the middle of a day lands on its first frame
+            if (delta < 0 && V.idx > dayStart[dayList[d]]) return show(dayStart[dayList[d]]);
+            const target = dayList[Math.max(0, Math.min(dayList.length - 1, d + delta))];
+            show(dayStart[target]);
+        }
+
+        // ---- playback ----
+
+        function play() {
+            if (!frames.length) return;
+            stopInertia();
+            if (V.idx >= frames.length - 1) show(dayStart[frames[V.idx].day]);
+            V.playing = true;
+            V.dir = 1;
+            clearTimeout(V.fullTimer);
+            fullEl.classList.remove('on');
+            $('v-play').classList.add('on');
+            $('v-play-label').textContent = 'Pausa';
+            prefetchAround();
+            tickPlay();
+        }
+
+        function tickPlay() {
+            if (!V.playing) return;
+            const next = V.idx + 1;
+            if (next >= frames.length) return pause();
+            const url = thumbUrl(frames[next]);
+            // Wait for the next frame instead of skipping it
+            if (loader.ready(url) || loader.failed(url)) show(next);
+            else {
+                stage.classList.add('loading');
+                prefetchAround();
+            }
+            V.playTimer = setTimeout(tickPlay, 1000 / +$('v-speed').value);
+        }
+
+        function pause() {
+            if (!V.playing) return;
+            V.playing = false;
+            clearTimeout(V.playTimer);
+            $('v-play').classList.remove('on');
+            $('v-play-label').textContent = 'Reproducir';
+            scheduleFull();
+        }
+
+        function togglePlay() {
+            V.playing ? pause() : play();
+        }
+
+        // ---- drag / swipe ----
+
+        function pxPerFrame() {
+            // A full-width drag moves ~90 frames
+            return Math.max(3, Math.min(14, stage.clientWidth / 90));
+        }
+
+        function stopInertia() {
+            if (V.inertia) cancelAnimationFrame(V.inertia);
+            V.inertia = null;
+        }
+
+        function startInertia(v) { // frames per ms
+            v = Math.max(-1.5, Math.min(1.5, v));
+            let pos = V.idx, last = performance.now();
+            const tick = now => {
+                const dt = Math.min(50, now - last);
+                last = now;
+                pos += v * dt;
+                v *= Math.pow(0.996, dt);
+                show(pos);
+                if (Math.abs(v) < 0.006 || pos <= 0 || pos >= frames.length - 1) {
+                    V.inertia = null;
+                    scheduleFull();
+                    return;
+                }
+                V.inertia = requestAnimationFrame(tick);
+            };
+            V.inertia = requestAnimationFrame(tick);
+        }
+
+        stage.addEventListener('pointerdown', e => {
+            if (e.button !== 0 || !frames.length) return;
+            stopInertia();
+            V.drag = {id: e.pointerId, x0: e.clientX, idx0: V.idx, lastX: e.clientX, lastT: e.timeStamp, v: 0, moved: false};
+            stage.setPointerCapture(e.pointerId);
+        });
+
+        stage.addEventListener('pointermove', e => {
+            const d = V.drag;
+            if (!d || e.pointerId !== d.id) return;
+            const dx = e.clientX - d.x0;
+            if (!d.moved) {
+                if (Math.abs(dx) < 6) return;
+                d.moved = true;
+                pause();
+                stage.classList.add('scrubbing');
+                dismissHint();
+            }
+            const dt = Math.max(1, e.timeStamp - d.lastT);
+            d.v = 0.6 * d.v + 0.4 * ((e.clientX - d.lastX) / dt);
+            d.lastX = e.clientX;
+            d.lastT = e.timeStamp;
+            // Dragging left moves forward in time, like flipping pages
+            show(d.idx0 - dx / pxPerFrame());
+        });
+
+        function endDrag(e, cancelled) {
+            const d = V.drag;
+            if (!d || e.pointerId !== d.id) return;
+            V.drag = null;
+            stage.classList.remove('scrubbing');
+            if (!d.moved) {
+                if (cancelled) return;
+                // Tap: sides step one frame, middle plays/pauses
+                const r = stage.getBoundingClientRect(), x = (e.clientX - r.left) / r.width;
+                if (x < 0.3) step(-1);
+                else if (x > 0.7) step(1);
+                else togglePlay();
+                return;
+            }
+            if (!cancelled && e.timeStamp - d.lastT < 80 && Math.abs(d.v) > 0.25) startInertia(-d.v / pxPerFrame());
+            else scheduleFull();
+        }
+        stage.addEventListener('pointerup', e => endDrag(e, false));
+        stage.addEventListener('pointercancel', e => endDrag(e, true));
+
+        stage.addEventListener('wheel', e => {
+            const horizontal = Math.abs(e.deltaX) > Math.abs(e.deltaY);
+            // Inline, vertical wheel keeps scrolling the page
+            if (!V.expanded && !horizontal) return;
+            e.preventDefault();
+            V.wheel += horizontal ? e.deltaX : e.deltaY;
+            const steps = Math.trunc(V.wheel / 25);
+            if (steps) {
+                V.wheel -= steps * 25;
+                stopInertia();
+                step(steps);
+            }
+        }, {passive: false});
+
+        range.addEventListener('input', () => {
+            pause();
+            stopInertia();
+            show(+range.value);
+        });
+
+        // ---- keyboard ----
+
+        document.addEventListener('keydown', e => {
+            if (!frames.length || $('player').open) return;
+            const t = e.target;
+            if (!V.expanded && !viewer.contains(t)) return;
+            if (t.tagName === 'SELECT' || (t === range && e.key.startsWith('Arrow'))) return;
+            const big = e.shiftKey ? 10 : 1;
+            const actions = {
+                ArrowLeft: () => step(-big),
+                ArrowRight: () => step(big),
+                ArrowUp: () => jumpDay(-1),
+                ArrowDown: () => jumpDay(1),
+                Home: () => step(-frames.length),
+                End: () => step(frames.length),
+                ' ': togglePlay,
+                f: () => V.expanded ? collapse() : expand(),
+                Escape: () => collapse(),
+            };
+            const action = actions[e.key.length === 1 ? e.key.toLowerCase() : e.key];
+            if (!action || (e.key === 'Escape' && !V.expanded)) return;
+            e.preventDefault();
+            dismissHint();
+            action();
+        });
+
+        // ---- fullscreen overlay ----
+
+        function expand(i) {
+            if (i !== undefined) {
+                pause();
+                stopInertia();
+                show(i);
+            }
+            if (V.expanded) return;
+            const slot = $('viewer-slot');
+            slot.style.height = slot.offsetHeight + 'px'; // keep the page from jumping
+            V.expanded = true;
+            viewer.classList.add('expanded');
+            document.body.classList.add('lock');
+            history.pushState({viewer: true}, '');
+            stage.focus({preventScroll: true});
+            showHint();
+        }
+
+        function collapse(fromHistory) {
+            if (!V.expanded) return;
+            V.expanded = false;
+            viewer.classList.remove('expanded');
+            document.body.classList.remove('lock');
+            $('viewer-slot').style.height = '';
+            if (!fromHistory && history.state && history.state.viewer) history.back();
+        }
+        window.addEventListener('popstate', () => collapse(true));
+
+        $('v-prev').onclick = () => step(-1);
+        $('v-next').onclick = () => step(1);
+        $('v-prev-day').onclick = () => jumpDay(-1);
+        $('v-next-day').onclick = () => jumpDay(1);
+        $('v-play').onclick = togglePlay;
+        $('v-expand').onclick = () => V.expanded ? collapse() : expand();
+
+        // ---- hint ----
+
+        function showHint() {
+            try { if (localStorage.getItem('mj-hint-seen')) return; } catch (e) {}
+            $('v-hint').classList.remove('gone');
+        }
+        function dismissHint() {
+            $('v-hint').classList.add('gone');
+            try { localStorage.setItem('mj-hint-seen', '1'); } catch (e) {}
+        }
+
+        function renderViewer() {
+            viewer.classList.toggle('empty', !frames.length);
+            range.max = Math.max(0, frames.length - 1);
+            const n = Math.max(1, frames.length - 1);
+            $('v-ticks').innerHTML = dayList.slice(1)
+                .map(day => `<span style="left:${dayStart[day] / n * 100}%" title="${day}"></span>`).join('');
+            if (!frames.length) {
+                V.idx = -1;
+                V.name = null;
+                thumbEl.removeAttribute('src');
+                fullEl.removeAttribute('src');
+            }
+        }
+
+        // ---- page sections -------------------------------------------------
+
+        function fmtInterval(s) {
+            return s < 120 ? `${s} s` : `${Math.round(s / 60)} min`;
+        }
+
+        function fmtAgo(sec) {
+            if (sec < 60) return 'hace instantes';
+            if (sec < 3600) return `hace ${Math.round(sec / 60)} min`;
+            if (sec < 86400) return `hace ${Math.round(sec / 3600)} h`;
+            const d = Math.round(sec / 86400);
+            return `hace ${d} ${d === 1 ? 'día' : 'días'}`;
+        }
+
+        function updateSummary() {
+            $('summary').textContent = frames.length
+                ? `${fmtN(frames.length)} frames en ${dayList.length} ${dayList.length === 1 ? 'día' : 'días'}`
+                : 'Sin frames todavía';
+            $('days-count').textContent = dayList.length ? `${dayList.length} en total` : '';
+            const live = $('live');
+            let text = `Capturando cada ${fmtInterval(captureInterval)}`;
+            if (frames.length) {
+                const ago = (Date.now() + serverOffset - frameStamp(frames[frames.length - 1])) / 1000;
+                live.classList.toggle('stale', ago > captureInterval * 3 + 60);
+                text += `. Última ${fmtAgo(Math.max(0, ago))}`;
+            }
+            $('live-text').textContent = text;
+        }
+
+        let daysShown = 10;
+        function renderDays() {
+            const box = $('days');
+            if (!dayList.length) {
+                box.innerHTML = '<p class="muted">Cuando haya capturas, acá vas a ver cada día.</p>';
+                return;
+            }
+            const rows = dayList.slice().reverse().slice(0, daysShown).map(day => {
+                const start = dayStart[day], end = dayEnd(day), count = end - start + 1;
+                const k = Math.min(6, count);
+                const samples = Array.from({length: k}, (_, j) => start + Math.round(j * (count - 1) / Math.max(1, k - 1)));
+                return `<div class="day">
+                    <div class="day-head">
+                        <button class="day-title" data-open="${start}">${formatDay(day)}</button>
+                        <span class="day-meta">${fmtN(count)} ${count === 1 ? 'frame' : 'frames'}, de ${frames[start].time.slice(0, 5)} a ${frames[end].time.slice(0, 5)}</span>
+                        <button class="text-btn" data-video="${day}">Video del día</button>
+                    </div>
+                    <div class="strip">${samples.map(i => `<button data-open="${i}" aria-label="Ver ${frames[i].time}">
+                        <img src="${thumbUrl(frames[i])}" loading="lazy" alt=""><span>${frames[i].time.slice(0, 5)}</span></button>`).join('')}</div>
+                </div>`;
+            });
+            const left = dayList.length - daysShown;
+            box.innerHTML = rows.join('') + (left > 0
+                ? `<button class="btn more" id="more-days">Mostrar ${Math.min(10, left)} días más</button>` : '');
+        }
+
+        $('days').addEventListener('click', e => {
+            const open = e.target.closest('[data-open]');
+            if (open) return expand(+open.dataset.open);
+            const video = e.target.closest('[data-video]');
+            if (video) {
+                $('date-from').value = $('date-to').value = video.dataset.video;
+                return createTimelapse();
+            }
+            if (e.target.closest('#more-days')) {
+                daysShown += 10;
+                renderDays();
+            }
+        });
+
+        function refreshFrames(follow) {
+            return fetch('/api/frames?compact=1')
+                .then(r => r.json())
+                .then(data => {
+                    const atEnd = V.idx >= frames.length - 1;
+                    const prevLen = frames.length;
+                    setFrames(data.days, data.now);
+                    if (frames.length !== prevLen) {
+                        renderDays();
+                        renderViewer();
+                    }
+                    updateSummary();
+                    if (!frames.length) return;
+                    let i = frames.findIndex(f => f.name === V.name);
+                    // Follow new captures when the viewer was sitting on the latest one
+                    if (i < 0 || follow || (atEnd && !busy())) i = frames.length - 1;
+                    if (i !== V.idx || frames[i].name !== V.name) show(i);
+                    else $('v-pos').textContent = `${fmtN(i + 1)} de ${fmtN(frames.length)}`;
+                });
+        }
+
+        // ---- actions -------------------------------------------------------
 
         function captureNow() {
-            showStatus('Capturando...');
+            const btn = $('capture-btn');
+            btn.disabled = true;
+            btn.textContent = 'Capturando...';
             fetch('/api/capture', {method: 'POST'})
                 .then(r => r.json())
                 .then(data => {
-                    showStatus(data.success ? 'Frame capturado!' : 'Error al capturar', !data.success);
-                    if (data.success) setTimeout(refreshFrames, 2000);
+                    showStatus(data.success ? 'Frame capturado' : 'La cámara no respondió. Revisá que esté encendida y en la red.', !data.success);
+                    if (data.success) return refreshFrames(true);
+                })
+                .catch(() => showStatus('No se pudo contactar al servidor', true))
+                .finally(() => {
+                    btn.disabled = false;
+                    btn.textContent = 'Capturar ahora';
                 });
         }
 
         function createTimelapse() {
-            const dateFrom = document.getElementById('date-from').value;
-            const dateTo = document.getElementById('date-to').value;
-            const btn = document.querySelector('.btn-success');
-            
+            const dateFrom = $('date-from').value;
+            const dateTo = $('date-to').value;
+            const btn = $('timelapse-btn');
+            const reset = () => {
+                btn.disabled = false;
+                btn.textContent = 'Generar video';
+            };
+            if (btn.disabled) return showStatus('Ya hay un video generándose', true);
+
             btn.disabled = true;
-            btn.textContent = 'Procesando...';
-            showStatus('Iniciando timelapse...');
-            
+            btn.textContent = 'Generando...';
+
             fetch('/api/timelapse', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({date_from: dateFrom, date_to: dateTo})
+                body: JSON.stringify({date_from: dateFrom, date_to: dateTo, look: $('look').value})
             })
             .then(r => r.json())
             .then(data => {
-                if (!data.success && !data.job_id) {
-                    showStatus('Error al iniciar', true);
-                    btn.disabled = false;
-                    btn.textContent = 'Generar Video';
-                    return;
+                if (!data.job_id) {
+                    showStatus(data.error || 'No se pudo iniciar el video', true);
+                    return reset();
                 }
-                
-                const jobId = data.job_id;
+                showStatus('Generando video');
                 const startTime = Date.now();
-                const progressEl = document.getElementById('job-progress');
-                const progressText = document.getElementById('job-progress-text');
-                const progressFill = document.getElementById('job-progress-fill');
+                const progressEl = $('job-progress');
+                const progressText = $('job-progress-text');
+                const progressFill = $('job-progress-fill');
                 progressFill.style.width = '0%';
                 progressText.textContent = 'Preparando...';
                 progressEl.classList.add('open');
 
                 const poll = setInterval(() => {
-                    fetch('/api/timelapse/' + jobId)
+                    fetch('/api/timelapse/' + data.job_id)
                         .then(r => r.json())
                         .then(job => {
                             const elapsed = Math.floor((Date.now() - startTime) / 1000);
-                            const mins = Math.floor(elapsed / 60);
-                            const secs = elapsed % 60;
-
+                            const clock = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
                             if (job.status === 'processing') {
-                                progressText.textContent = `${job.progress || 'Creando timelapse...'} · ${mins}:${String(secs).padStart(2,'0')}`;
+                                progressText.textContent = `${job.progress || 'Generando video...'} (${clock})`;
                                 progressFill.style.width = (job.percent || 0) + '%';
-                            } else {
-                                progressEl.classList.remove('open');
+                                return;
                             }
+                            clearInterval(poll);
+                            progressEl.classList.remove('open');
+                            reset();
                             if (job.status === 'done') {
-                                clearInterval(poll);
-                                showStatus('Timelapse creado!');
-                                btn.disabled = false;
-                                btn.textContent = 'Generar Video';
+                                showStatus('Video listo');
                                 refreshVideos();
-                            } else if (job.status === 'error') {
-                                clearInterval(poll);
-                                showStatus('Error: ' + (job.error || 'desconocido'), true);
-                                btn.disabled = false;
-                                btn.textContent = 'Generar Video';
+                            } else {
+                                showStatus('Error: ' + (job.error || 'el servidor perdió el trabajo'), true);
                             }
                         });
                 }, 2000);
+            })
+            .catch(() => {
+                showStatus('No se pudo contactar al servidor', true);
+                reset();
             });
         }
 
         function deleteFrames() {
-            if (!confirm('¿Borrar todos los frames?')) return;
-            showStatus('Borrando...');
+            if (!confirm('¿Borrar todos los frames? Se borran también de Box y no se pueden recuperar.')) return;
+            showStatus('Borrando frames...');
             fetch('/api/delete_frames', {method: 'POST'})
                 .then(r => r.json())
                 .then(data => {
-                    showStatus(data.success ? 'Frames borrados!' : 'Error', !data.success);
-                    if (data.success) {
-                        refreshFrames();
-                        document.getElementById('frame-count').textContent = '0';
-                    }
+                    showStatus(data.success ? 'Frames borrados' : 'No se pudieron borrar los frames', !data.success);
+                    if (data.success) refreshFrames(true);
                 });
         }
 
         function deleteVideos() {
             if (!confirm('¿Borrar todos los videos generados? Los frames quedan intactos.')) return;
-            showStatus('Borrando videos...');
             fetch('/api/delete_videos', {method: 'POST'})
                 .then(r => r.json())
                 .then(data => {
-                    showStatus(data.success ? `Videos borrados (${data.deleted} archivos)` : 'Error', !data.success);
+                    showStatus(data.success ? 'Videos borrados' : 'No se pudieron borrar los videos', !data.success);
                     if (data.success) refreshVideos();
                 });
         }
 
         function updateInterval() {
-            const interval = document.getElementById('interval').value;
+            const interval = $('interval').value;
             fetch('/api/config', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -600,51 +1189,77 @@
             })
             .then(r => r.json())
             .then(data => {
-                showStatus('Intervalo actualizado a ' + interval + 's');
-                document.getElementById('interval-display').textContent = interval + 's';
+                captureInterval = data.interval;
+                $('interval').value = data.interval;
+                showStatus(`Captura cada ${fmtInterval(data.interval)}`);
+                updateSummary();
             });
         }
 
-        function refreshFrames() {
-            location.reload();
+        // ---- videos ----
+
+        function videoTitle(filename) {
+            const m = filename.match(/^timelapse_(\d{8})_(\d{6})/);
+            if (!m) return filename;
+            const d = parseStamp(m[1] + m[2]);
+            return 'Generado el ' + d.toLocaleDateString('es-AR', {day: 'numeric', month: 'long'})
+                + ', ' + d.toLocaleTimeString('es-AR', {hour: '2-digit', minute: '2-digit'});
+        }
+
+        function renderVideos(videos) {
+            const grid = $('video-grid');
+            if (!videos.length) {
+                grid.innerHTML = '<p class="muted">Todavía no generaste videos. Elegí un rango en Generar timelapse, o tocá Video del día en cualquier día.</p>';
+                return;
+            }
+            grid.innerHTML = videos.map(v => `<div class="video-card">
+                <div class="thumb-wrap">
+                    ${v.has_thumb ? `<img src="/thumb/${v.filename.replace('.mp4', '_thumb.jpg')}" alt="" loading="lazy">` : ''}
+                    <span class="duration-badge">${v.duration}</span>
+                </div>
+                <div class="card-body">
+                    <p>${videoTitle(v.filename)}</p>
+                    <div class="actions">
+                        <button class="btn btn-accent" data-play="${v.filename}">Ver</button>
+                        <a class="btn" href="/video/${v.filename}" download>Descargar</a>
+                    </div>
+                </div>
+            </div>`).join('');
         }
 
         function refreshVideos() {
-            fetch('/api/videos')
-                .then(r => r.json())
-                .then(data => {
-                    const grid = document.getElementById('video-grid');
-                    if (!data.videos.length) {
-                        grid.innerHTML = '<p>No hay videos generados.</p>';
-                        return;
-                    }
-                    grid.innerHTML = data.videos.map(v => {
-                        const thumbFile = v.filename.replace('.mp4', '_thumb.jpg');
-                        return `<div class="video-card">
-                            <div class="thumb-wrap">
-                                ${v.has_thumb 
-                                    ? `<img src="/thumb/${thumbFile}" alt="${v.filename}">`
-                                    : `<div class="no-thumb">🎬</div>`}
-                                <span class="duration-badge">${v.duration}</span>
-                            </div>
-                            <div class="card-body">
-                                <p>${v.filename}</p>
-                                <a class="btn-download" href="/video/${v.filename}" download>⬇ Descargar</a>
-                            </div>
-                        </div>`;
-                    }).join('');
-                });
+            fetch('/api/videos').then(r => r.json()).then(data => renderVideos(data.videos));
         }
 
-        // Auto refresh every 30 seconds
-        setInterval(() => {
-            fetch('/api/frames')
-                .then(r => r.json())
-                .then(data => {
-                    const count = Object.values(data.frames).flat().length;
-                    document.getElementById('frame-count').textContent = count;
-                });
-        }, 30000);
+        const player = $('player'), playerVideo = $('player-video');
+        $('video-grid').addEventListener('click', e => {
+            const btn = e.target.closest('[data-play]');
+            if (!btn) return;
+            pause();
+            playerVideo.src = '/video/' + btn.dataset.play;
+            player.showModal();
+            playerVideo.play().catch(() => {});
+        });
+        player.addEventListener('click', e => { if (e.target === player) player.close(); });
+        player.addEventListener('close', () => {
+            playerVideo.pause();
+            playerVideo.removeAttribute('src');
+            playerVideo.load();
+        });
+
+        // ---- boot ----------------------------------------------------------
+
+        setFrames(JSON.parse($('frames-data').textContent), '{{ now }}');
+        renderViewer();
+        renderDays();
+        renderVideos(JSON.parse($('videos-data').textContent));
+        updateSummary();
+        if (frames.length) {
+            show(frames.length - 1);
+            showHint();
+        }
+        setInterval(() => refreshFrames(false).catch(() => {}), 60000);
+        setInterval(updateSummary, 30000);
     </script>
 </body>
 </html>
