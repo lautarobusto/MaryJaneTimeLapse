@@ -572,33 +572,36 @@
         let frames = [];     // [{name, day, time}] chronological
         let dayList = [];    // days, ascending
         let dayStart = {};   // day -> index of its first frame
-        let serverOffset = 0; // server clock minus browser clock (ms); the container may run in another TZ
+        // Filenames use the server's clock (UTC in Docker); everything shown is in the browser's time
+        let serverUtcOffset = 0; // minutes east of UTC
+        const pad = n => String(n).padStart(2, '0');
 
-        function parseStamp(s) {
-            return new Date(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8), +s.slice(8, 10), +s.slice(10, 12), +s.slice(12, 14));
+        function parseStamp(s) { // server-time YYYYMMDDHHMMSS -> Date
+            return new Date(Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8), +s.slice(8, 10), +s.slice(10, 12), +s.slice(12, 14))
+                            - serverUtcOffset * 60000);
         }
 
-        function setFrames(days, now) {
+        function setFrames(days, utcOffset) {
+            if (utcOffset !== undefined) serverUtcOffset = utcOffset;
             frames = [];
             dayStart = {};
-            dayList = Object.keys(days).sort();
-            for (const day of dayList) {
-                dayStart[day] = frames.length;
-                const compact = day.replace(/-/g, '');
-                for (const t of days[day]) {
-                    frames.push({name: `frame_${compact}_${t}.jpg`, day, time: `${t.slice(0, 2)}:${t.slice(2, 4)}:${t.slice(4, 6)}`});
+            for (const sday of Object.keys(days).sort()) {
+                const compact = sday.replace(/-/g, '');
+                for (const t of days[sday]) {
+                    const at = parseStamp(compact + t);
+                    const day = `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+                    if (!(day in dayStart)) dayStart[day] = frames.length;
+                    // sday is the server's day folder, used to ask it for that day's thumbs
+                    frames.push({name: `frame_${compact}_${t}.jpg`, sday, day, at,
+                                 time: `${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`});
                 }
             }
-            if (now) serverOffset = parseStamp(now) - Date.now();
+            dayList = Object.keys(dayStart).sort();
         }
 
         function dayEnd(day) {
             const next = dayList[dayList.indexOf(day) + 1];
             return (next ? dayStart[next] : frames.length) - 1;
-        }
-
-        function frameStamp(f) {
-            return parseStamp(f.day.replace(/-/g, '') + f.time.replace(/:/g, ''));
         }
 
         function formatDay(day) {
@@ -691,7 +694,7 @@
             fullEl.classList.remove('on');
             paint();
             prefetchAround();
-            prefetchDay(f.day);
+            prefetchDay(f.sday);
             scheduleFull();
         }
 
@@ -1010,7 +1013,7 @@
             const live = $('live');
             let text = `Capturando cada ${fmtInterval(captureInterval)}`;
             if (frames.length) {
-                const ago = (Date.now() + serverOffset - frameStamp(frames[frames.length - 1])) / 1000;
+                const ago = (Date.now() - frames[frames.length - 1].at) / 1000;
                 live.classList.toggle('stale', ago > captureInterval * 3 + 60);
                 text += `. Última ${fmtAgo(Math.max(0, ago))}`;
             }
@@ -1063,7 +1066,7 @@
                 .then(data => {
                     const atEnd = V.idx >= frames.length - 1;
                     const prevLen = frames.length;
-                    setFrames(data.days, data.now);
+                    setFrames(data.days, data.utc_offset);
                     if (frames.length !== prevLen) {
                         renderDays();
                         renderViewer();
@@ -1113,7 +1116,8 @@
             fetch('/api/timelapse', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({date_from: dateFrom, date_to: dateTo, look: $('look').value})
+                body: JSON.stringify({date_from: dateFrom, date_to: dateTo, look: $('look').value,
+                                      utc_offset: -new Date().getTimezoneOffset()})
             })
             .then(r => r.json())
             .then(data => {
@@ -1249,7 +1253,7 @@
 
         // ---- boot ----------------------------------------------------------
 
-        setFrames(JSON.parse($('frames-data').textContent), '{{ now }}');
+        setFrames(JSON.parse($('frames-data').textContent), {{ utc_offset }});
         renderViewer();
         renderDays();
         renderVideos(JSON.parse($('videos-data').textContent));

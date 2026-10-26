@@ -8,7 +8,7 @@ import shutil
 import signal
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from flask import Flask, render_template, jsonify, request, send_file, Response, abort
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -158,6 +158,12 @@ def group_frames_by_day():
     for day in grouped:
         grouped[day].sort(key=lambda x: x['datetime'], reverse=True)
     return dict(sorted(grouped.items(), reverse=True))
+
+
+def server_utc_offset():
+    """Minutes east of UTC of the container's clock, which names the frames (UTC unless TZ is set).
+    The UI uses it to show frame times in the viewer's own timezone."""
+    return int(datetime.now().astimezone().utcoffset().total_seconds() // 60)
 
 
 def frames_by_day():
@@ -386,8 +392,9 @@ LOOKS = {
 DEFAULT_LOOK = os.environ.get('TIMELAPSE_LOOK', 'plantas')
 
 
-def create_timelapse(job_id, date_from=None, date_to=None, look=DEFAULT_LOOK):
-    """Download the frames in range from Box to RAM and render the video into VIDEOS_DIR"""
+def create_timelapse(job_id, date_from=None, date_to=None, look=DEFAULT_LOOK, tz=None):
+    """Download the frames in range from Box to RAM and render the video into VIDEOS_DIR.
+    The date range is in `tz` (the browser's timezone) when given, otherwise in server time."""
     def status(msg, percent=None):
         jobs[job_id]['progress'] = msg
         if percent is not None:
@@ -395,9 +402,10 @@ def create_timelapse(job_id, date_from=None, date_to=None, look=DEFAULT_LOOK):
 
     selected = []
     for name, dt in all_frames().items():
-        if date_from and dt.date() < date_from:
+        day = dt.astimezone(tz).date() if tz else dt.date()
+        if date_from and day < date_from:
             continue
-        if date_to and dt.date() > date_to:
+        if date_to and day > date_to:
             continue
         selected.append((dt, name))
 
@@ -533,7 +541,7 @@ signal.signal(signal.SIGTERM, shutdown)
 def index():
     return render_template('index.html',
                            days=frames_by_day(),
-                           now=datetime.now().strftime('%Y%m%d%H%M%S'),
+                           utc_offset=server_utc_offset(),
                            videos=list_videos(),
                            looks=list(LOOKS),
                            default_look=DEFAULT_LOOK,
@@ -558,6 +566,10 @@ def api_timelapse():
     if data.get('date_to'):
         date_to = datetime.strptime(data['date_to'], '%Y-%m-%d').date()
 
+    tz = None
+    if data.get('utc_offset') is not None:
+        tz = timezone(timedelta(minutes=int(data['utc_offset'])))
+
     look = data.get('look') or DEFAULT_LOOK
     if look not in LOOKS:
         return jsonify({'success': False, 'error': f'look debe ser uno de: {", ".join(LOOKS)}'}), 400
@@ -567,7 +579,7 @@ def api_timelapse():
 
     def run():
         try:
-            output = create_timelapse(job_id, date_from, date_to, look)
+            output = create_timelapse(job_id, date_from, date_to, look, tz)
             jobs[job_id] = {'status': 'done', 'file': output, 'error': None}
         except Exception as e:
             print(f"[ERR] Timelapse creation failed: {e}")
@@ -588,7 +600,7 @@ def api_timelapse_status(job_id):
 @app.route('/api/frames')
 def api_frames():
     if request.args.get('compact') == '1':
-        return jsonify({'days': frames_by_day(), 'now': datetime.now().strftime('%Y%m%d%H%M%S')})
+        return jsonify({'days': frames_by_day(), 'utc_offset': server_utc_offset()})
     grouped = group_frames_by_day()
     return jsonify({'days': list(grouped.keys()), 'frames': {k: [f['filename'] for f in v] for k, v in grouped.items()}})
 
