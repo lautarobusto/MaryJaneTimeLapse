@@ -55,6 +55,19 @@
             line-height: 0.95;
         }
         .top .sub { color: var(--dust); margin-top: 8px; }
+        .cams { display: flex; gap: 8px; margin: -4px 0 16px; flex-wrap: wrap; }
+        .cams[hidden] { display: none; }
+        .cam-tab {
+            padding: 7px 14px;
+            border-radius: 999px;
+            border: 1px solid var(--root);
+            background: var(--bark);
+            color: var(--dust);
+            font-weight: 700;
+        }
+        .cam-tab.on { background: var(--sodium); border-color: var(--sodium); color: var(--sodium-ink); }
+        .osd-cam { display: block; margin-bottom: 4px; color: var(--sodium); font-weight: 700; font-size: 0.95rem; }
+        .osd-cam[hidden] { display: none; }
         .live { display: flex; align-items: center; gap: 10px; color: var(--dust); font-size: 0.95rem; }
         .live .dot {
             width: 9px; height: 9px; border-radius: 50%;
@@ -419,10 +432,12 @@
         <header class="top">
             <div>
                 <h1>Mary Jane</h1>
-                <p class="sub"><span id="summary"></span>{% if camera_url %}, cámara Imou en {{ camera_url }}{% endif %}</p>
+                <p class="sub"><span id="summary"></span><span id="cam-sub"></span></p>
             </div>
             <div class="live" id="live"><span class="dot"></span><span id="live-text"></span></div>
         </header>
+
+        <nav class="cams" id="cams" aria-label="Cámaras" hidden></nav>
 
         <!-- Frame viewer: drag/swipe to scrub through time -->
         <div class="viewer-slot" id="viewer-slot">
@@ -432,6 +447,7 @@
                     <img class="layer full" id="v-full" alt="">
                     <div class="osd">
                         <div>
+                            <span class="osd-cam" id="v-cam" hidden></span>
                             <span class="osd-time" id="v-time">--:--</span>
                             <span class="osd-date" id="v-date"></span>
                         </div>
@@ -484,7 +500,7 @@
             <aside>
                 <div class="panel">
                     <h2>Cámara</h2>
-                    <p>Las capturas se guardan en Box.</p>
+                    <p id="cam-panel">Las capturas se guardan en Box.</p>
                     <div class="stack">
                         <button class="btn btn-accent btn-block" id="capture-btn" onclick="captureNow()">Capturar ahora</button>
                         <div class="row">
@@ -496,13 +512,13 @@
                         </div>
                     </div>
                     <div class="danger">
-                        <button class="btn btn-danger btn-block" onclick="deleteFrames()">Borrar todos los frames</button>
+                        <button class="btn btn-danger btn-block" onclick="deleteFrames()">Borrar frames de esta cámara</button>
                     </div>
                 </div>
 
                 <div class="panel">
                     <h2>Generar timelapse</h2>
-                    <p>Sin fechas usa todos los frames.</p>
+                    <p>Sin fechas usa todos los frames de esta cámara.</p>
                     <div class="stack">
                         <div class="row">
                             <div class="field">
@@ -548,12 +564,28 @@
 
     <div class="toast" id="toast" role="status"></div>
 
+    <script id="cameras-data" type="application/json">{{ cameras|tojson }}</script>
     <script id="frames-data" type="application/json">{{ days|tojson }}</script>
     <script id="videos-data" type="application/json">{{ videos|tojson }}</script>
     <script>
         const $ = id => document.getElementById(id);
         const fmtN = n => n.toLocaleString('es-AR');
         let captureInterval = {{ interval }};
+        let cameras = [];
+        let daysByCam = {};
+        let currentCam = 'default';
+
+        function camName(id) {
+            const cam = cameras.find(c => c.id === id);
+            return cam ? cam.name : '';
+        }
+        function camHost(id) {
+            const cam = cameras.find(c => c.id === id);
+            return cam ? cam.host : '';
+        }
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, ch => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]));
+        }
 
         // ---- toast ---------------------------------------------------------
 
@@ -611,8 +643,8 @@
             return new Date(y, m - 1, d).toLocaleDateString('es-AR', opts);
         }
 
-        const thumbUrl = f => `/frame/${f.name}?thumb=1`;
-        const fullUrl = f => `/frame/${f.name}`;
+        const thumbUrl = f => `/frame/${f.name}?thumb=1&cam=${encodeURIComponent(currentCam)}`;
+        const fullUrl = f => `/frame/${f.name}?cam=${encodeURIComponent(currentCam)}`;
 
         // ---- image loader --------------------------------------------------
         // Preloads thumbs with limited concurrency; request() replaces the queue so
@@ -667,6 +699,7 @@
         const V = {idx: -1, name: null, dir: 1, playing: false, playTimer: null, fullTimer: null,
                    inertia: null, drag: null, wheel: 0, expanded: false};
         const prefetchedDays = new Set();
+        const prefetchKey = day => `${currentCam}/${day}`;
 
         function busy() {
             return V.playing || V.inertia || (V.drag && V.drag.moved);
@@ -682,6 +715,13 @@
             V.name = f.name;
             if (!changed) return;
 
+            const camLabel = $('v-cam');
+            if (cameras.length > 1) {
+                camLabel.hidden = false;
+                camLabel.textContent = camName(currentCam);
+            } else {
+                camLabel.hidden = true;
+            }
             $('v-time').textContent = f.time.slice(0, 5);
             $('v-date').textContent = formatDay(f.day);
             $('v-pos').textContent = `${fmtN(i + 1)} de ${fmtN(frames.length)}`;
@@ -745,9 +785,11 @@
 
         // Ask the server to pull the whole day of thumbs from Box into RAM
         function prefetchDay(day) {
-            if (prefetchedDays.has(day)) return;
-            prefetchedDays.add(day);
-            fetch(`/api/thumbs/${day}/prefetch`, {method: 'POST'}).catch(() => prefetchedDays.delete(day));
+            const key = prefetchKey(day);
+            if (prefetchedDays.has(key)) return;
+            prefetchedDays.add(key);
+            fetch(`/api/thumbs/${day}/prefetch?cam=${encodeURIComponent(currentCam)}`, {method: 'POST'})
+                .catch(() => prefetchedDays.delete(key));
         }
 
         function step(n) {
@@ -1006,6 +1048,13 @@
         }
 
         function updateSummary() {
+            const name = camName(currentCam);
+            const host = camHost(currentCam);
+            $('cam-sub').textContent = name ? `, ${name}${host ? ` · ${host}` : ''}` : '';
+            const panel = $('cam-panel');
+            if (panel) panel.textContent = cameras.length > 1
+                ? `Las capturas de ${name} se guardan en Box.`
+                : 'Las capturas se guardan en Box.';
             $('summary').textContent = frames.length
                 ? `${fmtN(frames.length)} frames en ${dayList.length} ${dayList.length === 1 ? 'día' : 'días'}`
                 : 'Sin frames todavía';
@@ -1060,13 +1109,60 @@
             }
         });
 
+        function renderCamTabs() {
+            const nav = $('cams');
+            if (cameras.length < 2) {
+                nav.hidden = true;
+                nav.innerHTML = '';
+                return;
+            }
+            nav.hidden = false;
+            nav.innerHTML = cameras.map(c =>
+                `<button type="button" class="cam-tab${c.id === currentCam ? ' on' : ''}" role="tab" aria-selected="${c.id === currentCam}" data-cam="${escapeHtml(c.id)}">${escapeHtml(c.name)}</button>`
+            ).join('');
+        }
+
+        function showCamera(id, follow) {
+            if (!cameras.some(c => c.id === id)) id = cameras[0] ? cameras[0].id : 'default';
+            const changed = id !== currentCam;
+            currentCam = id;
+            try { localStorage.setItem('mj-cam', id); } catch (e) {}
+            if (changed) {
+                pause();
+                stopInertia();
+                prefetchedDays.clear();
+                daysShown = 10;
+                V.idx = -1;
+                V.name = null;
+            }
+            setFrames((daysByCam && daysByCam[id]) || {}, serverUtcOffset);
+            renderCamTabs();
+            renderViewer();
+            renderDays();
+            updateSummary();
+            if (!frames.length) return;
+            let i = frames.findIndex(f => f.name === V.name);
+            if (i < 0 || follow) i = frames.length - 1;
+            show(i);
+        }
+
+        $('cams').addEventListener('click', e => {
+            const tab = e.target.closest('[data-cam]');
+            if (!tab || tab.dataset.cam === currentCam) return;
+            showCamera(tab.dataset.cam, true);
+        });
+
         function refreshFrames(follow) {
             return fetch('/api/frames?compact=1')
                 .then(r => r.json())
                 .then(data => {
+                    if (data.cameras) cameras = data.cameras;
+                    daysByCam = data.days || {};
                     const atEnd = V.idx >= frames.length - 1;
                     const prevLen = frames.length;
-                    setFrames(data.days, data.utc_offset);
+                    if (!cameras.some(c => c.id === currentCam) && cameras[0]) currentCam = cameras[0].id;
+                    setFrames(daysByCam[currentCam] || {}, data.utc_offset);
+                    renderCamTabs();
                     if (frames.length !== prevLen) {
                         renderDays();
                         renderViewer();
@@ -1087,7 +1183,11 @@
             const btn = $('capture-btn');
             btn.disabled = true;
             btn.textContent = 'Capturando...';
-            fetch('/api/capture', {method: 'POST'})
+            fetch('/api/capture', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({cam: currentCam})
+            })
                 .then(r => r.json())
                 .then(data => {
                     showStatus(data.success ? 'Frame capturado' : 'La cámara no respondió. Revisá que esté encendida y en la red.', !data.success);
@@ -1117,7 +1217,7 @@
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({date_from: dateFrom, date_to: dateTo, look: $('look').value,
-                                      utc_offset: -new Date().getTimezoneOffset()})
+                                      cam: currentCam, utc_offset: -new Date().getTimezoneOffset()})
             })
             .then(r => r.json())
             .then(data => {
@@ -1164,9 +1264,14 @@
         }
 
         function deleteFrames() {
-            if (!confirm('¿Borrar todos los frames? Se borran también de Box y no se pueden recuperar.')) return;
+            const name = camName(currentCam) || 'esta cámara';
+            if (!confirm(`¿Borrar los frames de ${name}? Se borran también de Box y no se pueden recuperar.`)) return;
             showStatus('Borrando frames...');
-            fetch('/api/delete_frames', {method: 'POST'})
+            fetch('/api/delete_frames', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({cam: currentCam})
+            })
                 .then(r => r.json())
                 .then(data => {
                     showStatus(data.success ? 'Frames borrados' : 'No se pudieron borrar los frames', !data.success);
@@ -1203,11 +1308,13 @@
         // ---- videos ----
 
         function videoTitle(filename) {
-            const m = filename.match(/^timelapse_(\d{8})_(\d{6})/);
+            const m = filename.match(/^timelapse_(?:([a-z0-9-]+)_)?(\d{8})_(\d{6})/);
             if (!m) return filename;
-            const d = parseStamp(m[1] + m[2]);
-            return 'Generado el ' + d.toLocaleDateString('es-AR', {day: 'numeric', month: 'long'})
+            const d = parseStamp(m[2] + m[3]);
+            const when = d.toLocaleDateString('es-AR', {day: 'numeric', month: 'long'})
                 + ', ' + d.toLocaleTimeString('es-AR', {hour: '2-digit', minute: '2-digit'});
+            const who = m[1] ? camName(m[1]) : (cameras.length > 1 ? camName('default') : '');
+            return (who ? who + ' · ' : '') + 'Generado el ' + when;
         }
 
         function renderVideos(videos) {
@@ -1253,7 +1360,13 @@
 
         // ---- boot ----------------------------------------------------------
 
-        setFrames(JSON.parse($('frames-data').textContent), {{ utc_offset }});
+        cameras = JSON.parse($('cameras-data').textContent);
+        daysByCam = JSON.parse($('frames-data').textContent);
+        let savedCam = null;
+        try { savedCam = localStorage.getItem('mj-cam'); } catch (e) {}
+        currentCam = cameras.some(c => c.id === savedCam) ? savedCam : (cameras[0] ? cameras[0].id : 'default');
+        setFrames(daysByCam[currentCam] || {}, {{ utc_offset }});
+        renderCamTabs();
         renderViewer();
         renderDays();
         renderVideos(JSON.parse($('videos-data').textContent));

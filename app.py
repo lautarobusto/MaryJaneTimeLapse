@@ -16,7 +16,6 @@ from apscheduler.schedulers.background import BackgroundScheduler
 app = Flask(__name__)
 
 # Config
-CAMERA_URL = os.environ.get('CAMERA_URL', '')
 TIMELAPSE_FRAME_DURATION = float(os.environ.get('TIMELAPSE_FRAME_DURATION', '0.1'))
 BOX_REMOTE = os.environ.get('BOX_REMOTE', 'box:MaryJaneTimeLapse').rstrip('/')
 UPLOAD_INTERVAL = int(os.environ.get('UPLOAD_INTERVAL', '600'))
@@ -29,7 +28,8 @@ THUMB_CACHE_DAYS = int(os.environ.get('THUMB_CACHE_DAYS', '7'))
 #     need no download. spool/pending holds hardlinks of frames not yet uploaded to Box.
 #   WORK_DIR  (tmpfs/RAM): scratch space for building timelapses
 #   DATA_DIR  (disk): small settings/index files only
-#   Box: {BOX_REMOTE}/frames/YYYY-MM-DD/frame_*.jpg, thumbs/ (same layout, 320px)
+#   Box, first camera: {BOX_REMOTE}/frames/YYYY-MM-DD/frame_*.jpg (thumbs/ mirrors it)
+#   Box, later cameras: {BOX_REMOTE}/frames/<id>/YYYY-MM-DD/frame_*.jpg
 SPOOL_DIR = '/app/spool'
 WORK_DIR = '/app/work'
 DATA_DIR = '/app/data'
@@ -48,8 +48,52 @@ for d in (SPOOL_FRAMES, SPOOL_THUMBS, SPOOL_TMP, SPOOL_PENDING, WORK_DIR, VIDEOS
     os.makedirs(d, exist_ok=True)
 
 FRAME_RE = re.compile(r'^frame_(\d{8})_(\d{6})\.jpg$')
-VIDEO_RE = re.compile(r'^timelapse_\d{8}_\d{6}(_thumb\.jpg|\.mp4)$')
+VIDEO_RE = re.compile(r'^timelapse_(?:[a-z0-9-]+_)?\d{8}_\d{6}(?:_thumb\.jpg|\.mp4)$')
 DAY_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+CAM_RE = re.compile(r'^[a-z0-9][a-z0-9-]{0,40}$')
+DEFAULT_CAM = 'default'
+
+
+def load_cameras():
+    """CAMERA_URL keeps the original layout. CAMERA_2_* adds another camera under its own folder."""
+    cameras = []
+    url = os.environ.get('CAMERA_URL', '').strip()
+    if url:
+        cameras.append({
+            'id': DEFAULT_CAM,
+            'name': os.environ.get('CAMERA_NAME', '').strip() or 'Cámara',
+            'url': url,
+            'host': urlparse(url).hostname or '',
+        })
+    url2 = os.environ.get('CAMERA_2_URL', '').strip()
+    if url2:
+        cid = os.environ.get('CAMERA_2_ID', 'carpa-a').strip() or 'carpa-a'
+        if not CAM_RE.match(cid) or cid == DEFAULT_CAM:
+            print(f"[ERR] Ignoring CAMERA_2_URL, CAMERA_2_ID is invalid: {cid}")
+        else:
+            cameras.append({
+                'id': cid,
+                'name': os.environ.get('CAMERA_2_NAME', '').strip() or 'Carpa A',
+                'url': url2,
+                'host': urlparse(url2).hostname or '',
+            })
+    return cameras
+
+
+CAMERAS = load_cameras()
+CAM_BY_ID = {c['id']: c for c in CAMERAS}
+
+
+def camera_public():
+    return [{'id': c['id'], 'name': c['name'], 'host': c['host']} for c in CAMERAS]
+
+
+def redact_url(text, url):
+    if not text:
+        return ''
+    if url:
+        text = text.replace(url, 'rtsp://***')
+    return text
 
 
 def load_json(path, default):
@@ -130,34 +174,70 @@ def parse_frame_date(filename):
     return None
 
 
-def all_frames():
-    """Return {filename: datetime} for frames in Box plus frames still in the spool."""
-    frames = {}
-    for rel in remote_frames.get():
-        name = rel.rsplit('/', 1)[-1]
-        dt = parse_frame_date(name)
-        if dt:
-            frames[name] = dt
-    for _, _, files in os.walk(SPOOL_FRAMES):
+def frame_rel(cam, day, name):
+    """Path under frames/ or thumbs/. The first camera stays at the historical day folders."""
+    if cam == DEFAULT_CAM:
+        return f"{day}/{name}"
+    return f"{cam}/{day}/{name}"
+
+
+def frame_dir(cam, day):
+    if cam == DEFAULT_CAM:
+        return day
+    return f"{cam}/{day}"
+
+
+def parse_listed_rel(rel):
+    """Return (cam, day, name, dt) for a path relative to frames/ or thumbs/."""
+    parts = [p for p in rel.split('/') if p]
+    if not parts:
+        return None
+    name = parts[-1]
+    dt = parse_frame_date(name)
+    if not dt:
+        return None
+    if len(parts) == 2 and DAY_RE.match(parts[0]):
+        return DEFAULT_CAM, parts[0], name, dt
+    if len(parts) == 3 and CAM_RE.match(parts[0]) and parts[0] != DEFAULT_CAM and DAY_RE.match(parts[1]):
+        return parts[0], parts[1], name, dt
+    return None
+
+
+def iter_local_frame_files(base):
+    if not os.path.isdir(base):
+        return
+    for root, _, files in os.walk(base):
+        rel = os.path.relpath(root, base).replace('\\', '/')
+        if rel == '.':
+            rel = ''
         for name in files:
-            dt = parse_frame_date(name)
-            if dt:
-                frames[name] = dt
-    return frames
+            if parse_frame_date(name):
+                yield rel, name
 
 
-def group_frames_by_day():
-    """Group frames by day, sorted by time"""
-    grouped = {}
-    for name, dt in all_frames().items():
-        grouped.setdefault(dt.strftime('%Y-%m-%d'), []).append({
-            'filename': name,
-            'datetime': dt,
-            'time': dt.strftime('%H:%M:%S')
-        })
-    for day in grouped:
-        grouped[day].sort(key=lambda x: x['datetime'], reverse=True)
-    return dict(sorted(grouped.items(), reverse=True))
+def iter_frames():
+    """Yield (cam, day, name, dt) for frames in Box plus frames still in the spool."""
+    seen = set()
+    for rel in remote_frames.get():
+        parsed = parse_listed_rel(rel)
+        if not parsed:
+            continue
+        cam, day, name, dt = parsed
+        key = (cam, name)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield cam, day, name, dt
+    for rel, name in iter_local_frame_files(SPOOL_FRAMES):
+        parsed = parse_listed_rel(f"{rel}/{name}" if rel else name)
+        if not parsed:
+            continue
+        cam, day, name, dt = parsed
+        key = (cam, name)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield cam, day, name, dt
 
 
 def server_utc_offset():
@@ -166,26 +246,34 @@ def server_utc_offset():
     return int(datetime.now().astimezone().utcoffset().total_seconds() // 60)
 
 
-def frames_by_day():
-    """Compact listing for the UI: {day: [HHMMSS, ...]} in chronological order"""
-    grouped = {}
-    for name in sorted(all_frames()):
-        grouped.setdefault(f"{name[6:10]}-{name[10:12]}-{name[12:14]}", []).append(name[15:21])
+def frames_by_camera():
+    """Compact listing for the UI: {cam: {day: [HHMMSS, ...]}} in chronological order"""
+    grouped = {c['id']: {} for c in CAMERAS}
+    for cam, _, name, dt in iter_frames():
+        day = dt.strftime('%Y-%m-%d')
+        times = grouped.setdefault(cam, {}).setdefault(day, [])
+        stamp = dt.strftime('%H%M%S')
+        if stamp not in times:
+            times.append(stamp)
+    for days in grouped.values():
+        for day in days:
+            days[day].sort()
     return grouped
 
 
-def capture_frame():
-    """Capture a frame (plus a small thumbnail) from the camera into the RAM spool"""
+def capture_frame(cam):
+    """Capture a frame (plus a small thumbnail) from one camera into the RAM spool"""
     now = datetime.now()
     name = f"frame_{now.strftime('%Y%m%d_%H%M%S')}.jpg"
     day = now.strftime('%Y-%m-%d')
-    tmp_frame = f"{SPOOL_TMP}/{name}"
-    tmp_thumb = f"{SPOOL_TMP}/thumb_{name}"
+    rel_dir = frame_dir(cam['id'], day)
+    tmp_frame = f"{SPOOL_TMP}/{cam['id']}_{name}"
+    tmp_thumb = f"{SPOOL_TMP}/{cam['id']}_thumb_{name}"
 
     try:
         result = subprocess.run([
             'ffmpeg', '-y', '-rtsp_transport', 'tcp',
-            '-i', CAMERA_URL,
+            '-i', cam['url'],
             '-frames:v', '1', '-q:v', '2', tmp_frame,
             '-frames:v', '1', '-vf', 'scale=320:-2', '-q:v', '5', tmp_thumb
         ], capture_output=True, text=True, timeout=30)
@@ -194,16 +282,16 @@ def capture_frame():
             # Move into place atomically so the uploader never sees partial files,
             # and queue a hardlink for the next batch upload
             for src, base, kind in ((tmp_thumb, SPOOL_THUMBS, 'thumbs'), (tmp_frame, SPOOL_FRAMES, 'frames')):
-                os.makedirs(f"{base}/{day}", exist_ok=True)
-                os.makedirs(f"{SPOOL_PENDING}/{kind}/{day}", exist_ok=True)
-                os.replace(src, f"{base}/{day}/{name}")
-                os.link(f"{base}/{day}/{name}", f"{SPOOL_PENDING}/{kind}/{day}/{name}")
-            print(f"[OK] Captured {name}")
+                os.makedirs(f"{base}/{rel_dir}", exist_ok=True)
+                os.makedirs(f"{SPOOL_PENDING}/{kind}/{rel_dir}", exist_ok=True)
+                os.replace(src, f"{base}/{rel_dir}/{name}")
+                os.link(f"{base}/{rel_dir}/{name}", f"{SPOOL_PENDING}/{kind}/{rel_dir}/{name}")
+            print(f"[OK] Captured {cam['name']} {name}")
             return True
-        print(f"[ERR] ffmpeg failed: {result.stderr[-200:]}")
+        print(f"[ERR] ffmpeg failed for {cam['name']}: {redact_url(result.stderr[-200:], cam['url'])}")
         return False
     except Exception as e:
-        print(f"[ERR] Capture failed: {e}")
+        print(f"[ERR] Capture failed for {cam['name']}: {e}")
         return False
     finally:
         for f in (tmp_frame, tmp_thumb):
@@ -211,13 +299,28 @@ def capture_frame():
                 os.remove(f)
 
 
-def remove_empty_day_dirs(base):
-    # Skip today so we don't race a capture creating its directory
+def capture_all():
+    ok = False
+    for cam in CAMERAS:
+        ok = capture_frame(cam) or ok
+    return ok
+
+
+def remove_empty_dirs(base):
+    # Skip today's folders so we don't race a capture creating its directory
+    if not os.path.isdir(base):
+        return
     today = datetime.now().strftime('%Y-%m-%d')
-    for day in os.listdir(base):
-        path = f"{base}/{day}"
-        if day != today and os.path.isdir(path) and not os.listdir(path):
-            os.rmdir(path)
+    for root, dirs, files in os.walk(base, topdown=False):
+        if root == base or files or dirs:
+            continue
+        leaf = os.path.basename(root)
+        if leaf == today:
+            continue
+        try:
+            os.rmdir(root)
+        except OSError:
+            pass
 
 
 def count_files(base):
@@ -239,7 +342,7 @@ def upload_spool():
                 print(f"[OK] Uploaded {n} {kind} to Box")
             else:
                 print(f"[ERR] Upload to Box failed: {result.stderr[-300:]}")
-        remove_empty_day_dirs(pending)
+        remove_empty_dirs(pending)
     if moved:
         remote_frames.invalidate()
     prune_local()
@@ -250,13 +353,14 @@ def prune_local():
     cutoff = datetime.now().timestamp() - LOCAL_RETENTION_HOURS * 3600
     removed = 0
     for base, kind in ((SPOOL_FRAMES, 'frames'), (SPOOL_THUMBS, 'thumbs')):
-        for day in os.listdir(base):
-            for name in os.listdir(f"{base}/{day}"):
-                dt = parse_frame_date(name)
-                if dt and dt.timestamp() < cutoff and not os.path.exists(f"{SPOOL_PENDING}/{kind}/{day}/{name}"):
-                    os.remove(f"{base}/{day}/{name}")
-                    removed += 1
-        remove_empty_day_dirs(base)
+        for rel, name in list(iter_local_frame_files(base)):
+            dt = parse_frame_date(name)
+            local = f"{base}/{rel}/{name}" if rel else f"{base}/{name}"
+            pending = f"{SPOOL_PENDING}/{kind}/{rel}/{name}" if rel else f"{SPOOL_PENDING}/{kind}/{name}"
+            if dt and dt.timestamp() < cutoff and not os.path.exists(pending):
+                os.remove(local)
+                removed += 1
+        remove_empty_dirs(base)
     if removed:
         print(f"[OK] Pruned {removed} local files older than {LOCAL_RETENTION_HOURS:g}h")
 
@@ -265,34 +369,42 @@ thumb_cache_lock = threading.Lock()
 thumb_cache_busy = set()
 
 
-def cache_day_thumbs(day):
+def thumb_cache_key(cam, day):
+    return f"{cam}__{day}"
+
+
+def cache_day_thumbs(cam, day):
     """Copy a whole day of thumbs from Box into RAM with one rclone call, instead of one
     `rclone cat` per frame while the viewer scrubs through it"""
-    tmp = f"{THUMB_CACHE}/.{day}"
+    key = thumb_cache_key(cam, day)
+    tmp = f"{THUMB_CACHE}/.{key}"
+    remote = f"{BOX_REMOTE}/thumbs/{frame_dir(cam, day)}"
     try:
-        result = rclone('copy', f"{BOX_REMOTE}/thumbs/{day}", tmp,
+        result = rclone('copy', remote, tmp,
                         '--transfers', '16', '--checkers', '16', timeout=1800)
         if result.returncode == 0:
-            os.replace(tmp, f"{THUMB_CACHE}/{day}")
-            print(f"[OK] Cached thumbs for {day}")
+            os.replace(tmp, f"{THUMB_CACHE}/{key}")
+            print(f"[OK] Cached thumbs for {cam} {day}")
         else:
-            print(f"[ERR] Thumb cache for {day} failed: {result.stderr[-300:]}")
+            print(f"[ERR] Thumb cache for {cam} {day} failed: {result.stderr[-300:]}")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
         with thumb_cache_lock:
-            thumb_cache_busy.discard(day)
-    # Keep only the most recently viewed days
+            thumb_cache_busy.discard(key)
+    # Keep the most recently viewed days, with room for every camera
+    keep = THUMB_CACHE_DAYS * max(1, len(CAMERAS))
     days = sorted((d for d in os.listdir(THUMB_CACHE) if not d.startswith('.')),
                   key=lambda d: os.path.getmtime(f"{THUMB_CACHE}/{d}"), reverse=True)
-    for d in days[THUMB_CACHE_DAYS:]:
+    for d in days[keep:]:
         shutil.rmtree(f"{THUMB_CACHE}/{d}", ignore_errors=True)
 
 
-def spool_path(base, filename):
+def local_frame(base, cam, filename):
     dt = parse_frame_date(filename)
-    if not dt:
+    if not dt or cam not in CAM_BY_ID:
         abort(404)
-    return dt.strftime('%Y-%m-%d'), f"{base}/{dt.strftime('%Y-%m-%d')}/{filename}"
+    day = dt.strftime('%Y-%m-%d')
+    return day, f"{base}/{frame_rel(cam, day, filename)}"
 
 
 def stream_remote(path, mimetype, download_name=None):
@@ -392,7 +504,7 @@ LOOKS = {
 DEFAULT_LOOK = os.environ.get('TIMELAPSE_LOOK', 'plantas')
 
 
-def create_timelapse(job_id, date_from=None, date_to=None, look=DEFAULT_LOOK, tz=None):
+def create_timelapse(job_id, date_from=None, date_to=None, look=DEFAULT_LOOK, tz=None, cam_id=DEFAULT_CAM):
     """Download the frames in range from Box to RAM and render the video into VIDEOS_DIR.
     The date range is in `tz` (the browser's timezone) when given, otherwise in server time."""
     def status(msg, percent=None):
@@ -400,8 +512,15 @@ def create_timelapse(job_id, date_from=None, date_to=None, look=DEFAULT_LOOK, tz
         if percent is not None:
             jobs[job_id]['percent'] = round(percent, 1)
 
+    cam = CAM_BY_ID.get(cam_id) or CAM_BY_ID.get(DEFAULT_CAM)
+    if not cam:
+        raise ValueError('No hay cámara configurada')
+    cam_id = cam['id']
+
     selected = []
-    for name, dt in all_frames().items():
+    for frame_cam, _, name, dt in iter_frames():
+        if frame_cam != cam_id:
+            continue
         day = dt.astimezone(tz).date() if tz else dt.date()
         if date_from and day < date_from:
             continue
@@ -415,6 +534,7 @@ def create_timelapse(job_id, date_from=None, date_to=None, look=DEFAULT_LOOK, tz
     selected.sort()
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    video_prefix = '' if cam_id == DEFAULT_CAM else f"{cam_id}_"
     job_dir = f"{WORK_DIR}/{job_id}"
     src_dir = f"{job_dir}/src"
     seq_dir = f"{job_dir}/seq"
@@ -425,7 +545,8 @@ def create_timelapse(job_id, date_from=None, date_to=None, look=DEFAULT_LOOK, tz
         # Frames kept locally (last LOCAL_RETENTION_HOURS) are copied; the rest come from Box
         to_download = []
         for dt, name in selected:
-            day, local = spool_path(SPOOL_FRAMES, name)
+            day = dt.strftime('%Y-%m-%d')
+            local = f"{SPOOL_FRAMES}/{frame_rel(cam_id, day, name)}"
             if os.path.exists(local):
                 os.makedirs(f"{src_dir}/{day}", exist_ok=True)
                 shutil.copy(local, f"{src_dir}/{day}/{name}")
@@ -440,7 +561,8 @@ def create_timelapse(job_id, date_from=None, date_to=None, look=DEFAULT_LOOK, tz
             with open(list_file, 'w') as f:
                 f.write('\n'.join(to_download))
             local_count = len(selected) - len(to_download)
-            proc = subprocess.Popen(['rclone', 'copy', f"{BOX_REMOTE}/frames", src_dir, '--files-from', list_file,
+            remote_frames_dir = f"{BOX_REMOTE}/frames" if cam_id == DEFAULT_CAM else f"{BOX_REMOTE}/frames/{cam_id}"
+            proc = subprocess.Popen(['rclone', 'copy', remote_frames_dir, src_dir, '--files-from', list_file,
                                      '--transfers', '16', '--checkers', '16'],
                                     stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
             # Drain stderr in the background so the pipe never fills up while we poll
@@ -471,7 +593,7 @@ def create_timelapse(job_id, date_from=None, date_to=None, look=DEFAULT_LOOK, tz
             raise ValueError('No hay suficientes frames')
 
         status(f'Generando video con {i} frames...', render_start)
-        output_file = f"{job_dir}/timelapse_{timestamp}.mp4"
+        output_file = f"{job_dir}/timelapse_{video_prefix}{timestamp}.mp4"
         expected = i * TIMELAPSE_FRAME_DURATION
         proc = subprocess.Popen([
             'ffmpeg', '-y', '-nostats', '-progress', 'pipe:1',
@@ -521,7 +643,7 @@ def create_timelapse(job_id, date_from=None, date_to=None, look=DEFAULT_LOOK, tz
 
 
 # Schedule automatic capture and upload
-scheduler.add_job(capture_frame, 'interval', seconds=CAPTURE_INTERVAL, id='capture')
+scheduler.add_job(capture_all, 'interval', seconds=CAPTURE_INTERVAL, id='capture', max_instances=1)
 scheduler.add_job(upload_spool, 'interval', seconds=UPLOAD_INTERVAL, id='upload', max_instances=1)
 scheduler.start()
 
@@ -540,18 +662,24 @@ signal.signal(signal.SIGTERM, shutdown)
 @app.route('/')
 def index():
     return render_template('index.html',
-                           days=frames_by_day(),
+                           days=frames_by_camera(),
+                           cameras=camera_public(),
                            utc_offset=server_utc_offset(),
                            videos=list_videos(),
                            looks=list(LOOKS),
                            default_look=DEFAULT_LOOK,
-                           interval=CAPTURE_INTERVAL,
-                           camera_url=urlparse(CAMERA_URL).hostname or '')
+                           interval=CAPTURE_INTERVAL)
 
 
 @app.route('/api/capture', methods=['POST'])
 def api_capture():
-    success = capture_frame()
+    data = request.get_json(silent=True) or {}
+    cam_id = data.get('cam')
+    if cam_id:
+        cam = CAM_BY_ID.get(cam_id)
+        success = capture_frame(cam) if cam else False
+    else:
+        success = capture_all()
     return jsonify({'success': success})
 
 
@@ -574,12 +702,16 @@ def api_timelapse():
     if look not in LOOKS:
         return jsonify({'success': False, 'error': f'look debe ser uno de: {", ".join(LOOKS)}'}), 400
 
+    cam_id = data.get('cam') or DEFAULT_CAM
+    if cam_id not in CAM_BY_ID:
+        return jsonify({'success': False, 'error': 'Cámara desconocida'}), 400
+
     job_id = str(uuid.uuid4())[:8]
     jobs[job_id] = {'status': 'processing', 'file': None, 'error': None, 'progress': 'Preparando...', 'percent': 0}
 
     def run():
         try:
-            output = create_timelapse(job_id, date_from, date_to, look, tz)
+            output = create_timelapse(job_id, date_from, date_to, look, tz, cam_id)
             jobs[job_id] = {'status': 'done', 'file': output, 'error': None}
         except Exception as e:
             print(f"[ERR] Timelapse creation failed: {e}")
@@ -599,10 +731,10 @@ def api_timelapse_status(job_id):
 
 @app.route('/api/frames')
 def api_frames():
+    days = frames_by_camera()
     if request.args.get('compact') == '1':
-        return jsonify({'days': frames_by_day(), 'utc_offset': server_utc_offset()})
-    grouped = group_frames_by_day()
-    return jsonify({'days': list(grouped.keys()), 'frames': {k: [f['filename'] for f in v] for k, v in grouped.items()}})
+        return jsonify({'cameras': camera_public(), 'days': days, 'utc_offset': server_utc_offset()})
+    return jsonify({'cameras': camera_public(), 'days': days, 'utc_offset': server_utc_offset()})
 
 
 @app.route('/api/videos')
@@ -623,15 +755,20 @@ def api_storage():
 
 @app.route('/frame/<filename>')
 def serve_frame(filename):
+    if not FRAME_RE.match(filename):
+        abort(404)
+    cam = request.args.get('cam') or DEFAULT_CAM
+    if cam not in CAM_BY_ID:
+        abort(404)
     thumb = request.args.get('thumb') == '1'
     base, remote = (SPOOL_THUMBS, 'thumbs') if thumb else (SPOOL_FRAMES, 'frames')
-    day, local = spool_path(base, filename)
+    day, local = local_frame(base, cam, filename)
     if thumb and not os.path.exists(local):
-        local = f"{THUMB_CACHE}/{day}/{filename}"
+        local = f"{THUMB_CACHE}/{thumb_cache_key(cam, day)}/{filename}"
     if os.path.exists(local):
         # Frames never change once captured
         return send_file(local, max_age=86400)
-    return stream_remote(f"{remote}/{day}/{filename}", 'image/jpeg')
+    return stream_remote(f"{remote}/{frame_rel(cam, day, filename)}", 'image/jpeg')
 
 
 @app.route('/api/thumbs/<day>/prefetch', methods=['POST'])
@@ -639,19 +776,23 @@ def prefetch_thumbs(day):
     """Called by the viewer when it reaches a day, so scrubbing it doesn't hit Box per frame"""
     if not DAY_RE.match(day):
         abort(404)
-    cached = f"{THUMB_CACHE}/{day}"
+    cam = request.args.get('cam') or DEFAULT_CAM
+    if cam not in CAM_BY_ID:
+        abort(404)
+    key = thumb_cache_key(cam, day)
+    cached = f"{THUMB_CACHE}/{key}"
     if os.path.isdir(cached):
         os.utime(cached)
         return jsonify({'status': 'cached'})
-    local = f"{SPOOL_THUMBS}/{day}"
-    total = len(frames_by_day().get(day, []))
+    local = f"{SPOOL_THUMBS}/{frame_dir(cam, day)}"
+    total = len(frames_by_camera().get(cam, {}).get(day, []))
     if not total or (os.path.isdir(local) and len(os.listdir(local)) >= total):
         return jsonify({'status': 'local'})
     with thumb_cache_lock:
-        if day in thumb_cache_busy:
+        if key in thumb_cache_busy:
             return jsonify({'status': 'loading'})
-        thumb_cache_busy.add(day)
-    threading.Thread(target=cache_day_thumbs, args=(day,), daemon=True).start()
+        thumb_cache_busy.add(key)
+    threading.Thread(target=cache_day_thumbs, args=(cam, day), daemon=True).start()
     return jsonify({'status': 'loading'})
 
 
@@ -675,15 +816,50 @@ def serve_thumb(filename):
     return send_file(path, mimetype='image/jpeg')
 
 
+def delete_camera_frames(cam):
+    """Remove one camera's frames. The first camera lives in the day folders, not under frames/default."""
+    count = sum(1 for frame_cam, _, _, _ in iter_frames() if frame_cam == cam)
+    if cam == DEFAULT_CAM:
+        for kind in ('frames', 'thumbs'):
+            result = rclone('lsf', f"{BOX_REMOTE}/{kind}", '--dirs-only', '--max-depth', '1', timeout=120)
+            if result.returncode != 0 and 'directory not found' not in result.stderr:
+                raise RuntimeError(result.stderr[:300])
+            for line in result.stdout.splitlines():
+                day = line.strip().strip('/')
+                if DAY_RE.match(day):
+                    rclone('purge', f"{BOX_REMOTE}/{kind}/{day}", timeout=1800)
+        for base in (SPOOL_FRAMES, SPOOL_THUMBS, f"{SPOOL_PENDING}/frames", f"{SPOOL_PENDING}/thumbs"):
+            if not os.path.isdir(base):
+                continue
+            for name in os.listdir(base):
+                path = f"{base}/{name}"
+                if DAY_RE.match(name) and os.path.isdir(path):
+                    shutil.rmtree(path, ignore_errors=True)
+    else:
+        for kind in ('frames', 'thumbs'):
+            rclone('purge', f"{BOX_REMOTE}/{kind}/{cam}", timeout=1800)
+        for base in (SPOOL_FRAMES, SPOOL_THUMBS, f"{SPOOL_PENDING}/frames", f"{SPOOL_PENDING}/thumbs"):
+            shutil.rmtree(f"{base}/{cam}", ignore_errors=True)
+    if os.path.isdir(THUMB_CACHE):
+        prefix = f"{cam}__"
+        for name in os.listdir(THUMB_CACHE):
+            if name.startswith(prefix) or (cam == DEFAULT_CAM and DAY_RE.match(name)):
+                shutil.rmtree(f"{THUMB_CACHE}/{name}", ignore_errors=True)
+    remote_frames.invalidate()
+    return count
+
+
 @app.route('/api/delete_frames', methods=['POST'])
 def delete_frames():
-    count = len(all_frames())
-    for path in ('frames', 'thumbs'):
-        rclone('purge', f"{BOX_REMOTE}/{path}", timeout=1800)
-    for d in (SPOOL_FRAMES, SPOOL_THUMBS, SPOOL_PENDING, THUMB_CACHE):
-        shutil.rmtree(d, ignore_errors=True)
-        os.makedirs(d, exist_ok=True)
-    remote_frames.invalidate()
+    data = request.get_json(silent=True) or {}
+    cam = data.get('cam') or DEFAULT_CAM
+    if cam not in CAM_BY_ID:
+        return jsonify({'success': False, 'error': 'Cámara desconocida'}), 400
+    try:
+        count = delete_camera_frames(cam)
+    except Exception as e:
+        print(f"[ERR] Delete frames failed: {e}")
+        return jsonify({'success': False, 'error': 'No se pudieron borrar los frames'}), 500
     return jsonify({'success': True, 'deleted': count})
 
 
