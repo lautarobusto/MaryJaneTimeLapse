@@ -294,6 +294,7 @@
             background: var(--bark-2);
         }
         .strip img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.3s; }
+        .strip img:not([src]) { display: none; }
         .strip button:hover img { transform: scale(1.06); }
         .strip span {
             position: absolute;
@@ -553,7 +554,7 @@
                 <h2>Videos generados</h2>
                 <button class="text-btn" onclick="deleteVideos()">Borrar videos</button>
             </div>
-            <p class="muted" style="margin:-6px 0 16px">Quedan en el servidor hasta que se reinicie; descargalos para guardarlos.</p>
+            <p class="muted" style="margin:-6px 0 16px">Quedan guardados en el servidor. Descargalos si los querés en tu compu.</p>
             <div class="video-grid" id="video-grid"></div>
         </section>
     </div>
@@ -699,7 +700,9 @@
         const V = {idx: -1, name: null, dir: 1, playing: false, playTimer: null, fullTimer: null,
                    inertia: null, drag: null, wheel: 0, expanded: false};
         const prefetchedDays = new Set();
+        const readyDays = new Set();
         const prefetchKey = day => `${currentCam}/${day}`;
+        // One day at a time. A page of strips used to open one rclone cat per thumbnail.
 
         function busy() {
             return V.playing || V.inertia || (V.drag && V.drag.moved);
@@ -734,7 +737,8 @@
             fullEl.classList.remove('on');
             paint();
             prefetchAround();
-            prefetchDay(f.sday);
+            enqueueDay(f.sday, true);
+            enqueueStripDays(f.day);
             scheduleFull();
         }
 
@@ -773,23 +777,84 @@
         }
 
         function prefetchAround() {
-            const ahead = V.playing ? 90 : 40, behind = 12, urls = [];
+            const ahead = V.playing ? 48 : 16, behind = 6, urls = [];
+            const want = i => {
+                if (i < 0 || i >= frames.length) return;
+                // Uncached thumbs are one rclone cat each. Wait until the day is in RAM.
+                if (readyDays.has(prefetchKey(frames[i].sday))) urls.push(thumbUrl(frames[i]));
+            };
             for (let k = 0; k <= ahead; k++) {
-                const a = V.idx + V.dir * k;
-                if (a >= 0 && a < frames.length) urls.push(thumbUrl(frames[a]));
-                const b = V.idx - V.dir * k;
-                if (k && k <= behind && b >= 0 && b < frames.length) urls.push(thumbUrl(frames[b]));
+                want(V.idx + V.dir * k);
+                if (k && k <= behind) want(V.idx - V.dir * k);
             }
             loader.request(urls);
         }
 
-        // Ask the server to pull the whole day of thumbs from Box into RAM
-        function prefetchDay(day) {
+        const dayQueue = [];
+        let dayBusy = false;
+        let dayGen = 0;
+
+        function enqueueStripDays(localDay) {
+            const start = dayStart[localDay];
+            if (start == null) return;
+            const end = dayEnd(localDay), count = end - start + 1, k = Math.min(6, count);
+            for (let j = 0; j < k; j++) {
+                const i = start + Math.round(j * (count - 1) / Math.max(1, k - 1));
+                enqueueDay(frames[i].sday);
+            }
+        }
+
+        function enqueueDay(day, first) {
+            if (!day || readyDays.has(prefetchKey(day)) || dayQueue.includes(day)) return;
+            if (first) dayQueue.unshift(day);
+            else dayQueue.push(day);
+            pumpDays();
+        }
+
+        function pumpDays() {
+            if (dayBusy || !dayQueue.length) return;
+            const day = dayQueue.shift();
             const key = prefetchKey(day);
-            if (prefetchedDays.has(key)) return;
+            if (readyDays.has(key)) return pumpDays();
+            dayBusy = true;
             prefetchedDays.add(key);
-            fetch(`/api/thumbs/${day}/prefetch?cam=${encodeURIComponent(currentCam)}`, {method: 'POST'})
-                .catch(() => prefetchedDays.delete(key));
+            const gen = dayGen;
+            let tries = 0;
+            const poll = () => {
+                if (gen !== dayGen) return;
+                fetch(`/api/thumbs/${day}/prefetch?cam=${encodeURIComponent(currentCam)}`, {method: 'POST'})
+                    .then(r => r.json())
+                    .then(data => {
+                        if (gen !== dayGen) return;
+                        if (data.status === 'cached' || data.status === 'local') {
+                            readyDays.add(key);
+                            revealStrips(day);
+                            prefetchAround();
+                            dayBusy = false;
+                            pumpDays();
+                            return;
+                        }
+                        if (data.status === 'loading' && tries++ < 90) {
+                            setTimeout(poll, 800);
+                            return;
+                        }
+                        prefetchedDays.delete(key);
+                        dayBusy = false;
+                        pumpDays();
+                    })
+                    .catch(() => {
+                        prefetchedDays.delete(key);
+                        dayBusy = false;
+                        pumpDays();
+                    });
+            };
+            poll();
+        }
+
+        function revealStrips(sday) {
+            document.querySelectorAll(`img[data-sday="${sday}"]`).forEach(img => {
+                if (!img.getAttribute('src') && img.dataset.src) img.src = img.dataset.src;
+            });
         }
 
         function step(n) {
@@ -1086,13 +1151,24 @@
                         <span class="day-meta">${fmtN(count)} ${count === 1 ? 'frame' : 'frames'}, de ${frames[start].time.slice(0, 5)} a ${frames[end].time.slice(0, 5)}</span>
                         <button class="text-btn" data-video="${day}">Video del día</button>
                     </div>
-                    <div class="strip">${samples.map(i => `<button data-open="${i}" aria-label="Ver ${frames[i].time}">
-                        <img src="${thumbUrl(frames[i])}" loading="lazy" alt=""><span>${frames[i].time.slice(0, 5)}</span></button>`).join('')}</div>
+                    <div class="strip">${samples.map(i => {
+                        const src = thumbUrl(frames[i]);
+                        const ready = readyDays.has(prefetchKey(frames[i].sday));
+                        return `<button data-open="${i}" aria-label="Ver ${frames[i].time}">
+                        <img ${ready ? `src="${src}"` : ''} data-src="${src}" data-sday="${frames[i].sday}" alt="" decoding="async"><span>${frames[i].time.slice(0, 5)}</span></button>`;
+                    }).join('')}</div>
                 </div>`;
             });
             const left = dayList.length - daysShown;
             box.innerHTML = rows.join('') + (left > 0
                 ? `<button class="btn more" id="more-days">Mostrar ${Math.min(10, left)} días más</button>` : '');
+            revealReadyStrips();
+        }
+
+        function revealReadyStrips() {
+            document.querySelectorAll('img[data-sday]').forEach(img => {
+                if (readyDays.has(prefetchKey(img.dataset.sday))) revealStrips(img.dataset.sday);
+            });
         }
 
         $('days').addEventListener('click', e => {
@@ -1131,6 +1207,10 @@
                 pause();
                 stopInertia();
                 prefetchedDays.clear();
+                readyDays.clear();
+                dayQueue.length = 0;
+                dayBusy = false;
+                dayGen++;
                 daysShown = 10;
                 V.idx = -1;
                 V.name = null;
@@ -1332,7 +1412,7 @@
                     <p>${videoTitle(v.filename)}</p>
                     <div class="actions">
                         <button class="btn btn-accent" data-play="${v.filename}">Ver</button>
-                        <a class="btn" href="/video/${v.filename}" download>Descargar</a>
+                        <a class="btn" href="/video/${v.filename}?descarga=1">Descargar</a>
                     </div>
                 </div>
             </div>`).join('');

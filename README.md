@@ -44,8 +44,7 @@ environment:
 
 ## Volúmenes
 
-- `./frames:/app/frames` - Frames capturados
-- `./videos:/app/videos` - Videos timelapse generados
+- `./data:/app/data` - Ajustes, índice y videos generados (`videos/`)
 
 ## API Endpoints
 

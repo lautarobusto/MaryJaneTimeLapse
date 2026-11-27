@@ -37,8 +37,9 @@ SPOOL_FRAMES = f"{SPOOL_DIR}/frames"
 SPOOL_THUMBS = f"{SPOOL_DIR}/thumbs"
 SPOOL_TMP = f"{SPOOL_DIR}/tmp"
 SPOOL_PENDING = f"{SPOOL_DIR}/pending"
-# Generated videos stay in RAM for download only (not uploaded to Box; lost on restart)
-VIDEOS_DIR = f"{WORK_DIR}/videos"
+# Generated videos live on the data disk so a container restart does not delete them.
+# Not uploaded to Box. Render scratch stays in WORK_DIR (RAM).
+VIDEOS_DIR = f"{DATA_DIR}/videos"
 # Whole days of thumbs copied from Box so the frame viewer can scrub them quickly
 THUMB_CACHE = f"{WORK_DIR}/thumbcache"
 SETTINGS_FILE = f"{DATA_DIR}/settings.json"
@@ -50,6 +51,22 @@ for d in (SPOOL_FRAMES, SPOOL_THUMBS, SPOOL_TMP, SPOOL_PENDING, WORK_DIR, VIDEOS
 FRAME_RE = re.compile(r'^frame_(\d{8})_(\d{6})\.jpg$')
 VIDEO_RE = re.compile(r'^timelapse_(?:[a-z0-9-]+_)?\d{8}_\d{6}(?:_thumb\.jpg|\.mp4)$')
 DAY_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+
+
+def adopt_legacy_videos():
+    """Videos used to live in the work tmpfs. Keep any that are still there."""
+    legacy = f"{WORK_DIR}/videos"
+    if not os.path.isdir(legacy):
+        return
+    for name in os.listdir(legacy):
+        src = f"{legacy}/{name}"
+        dst = f"{VIDEOS_DIR}/{name}"
+        if os.path.isfile(src) and VIDEO_RE.match(name) and not os.path.exists(dst):
+            shutil.move(src, dst)
+            print(f"[OK] Moved video to disk {name}")
+
+
+adopt_legacy_videos()
 CAM_RE = re.compile(r'^[a-z0-9][a-z0-9-]{0,40}$')
 DEFAULT_CAM = 'default'
 
@@ -600,7 +617,8 @@ def create_timelapse(job_id, date_from=None, date_to=None, look=DEFAULT_LOOK, tz
             '-framerate', str(1 / TIMELAPSE_FRAME_DURATION),
             '-i', f"{seq_dir}/frame_%06d.jpg",
             '-vf', LOOKS.get(look, LOOKS[DEFAULT_LOOK]),
-            '-c:v', 'libx264', '-preset', 'slow', '-crf', '18', '-pix_fmt', 'yuv420p',
+            '-c:v', 'libx264', '-preset', 'slow', '-crf', '23',
+            '-maxrate', '2300k', '-bufsize', '5000k', '-pix_fmt', 'yuv420p',
             '-movflags', '+faststart', output_file
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         err = []
@@ -803,7 +821,14 @@ def serve_video(filename):
     path = f"{VIDEOS_DIR}/{filename}"
     if not os.path.exists(path):
         abort(404)
-    return send_file(path, mimetype='video/mp4', as_attachment=True, download_name=filename)
+    download = request.args.get('descarga') == '1'
+    return send_file(
+        path,
+        mimetype='video/mp4',
+        conditional=True,
+        as_attachment=download,
+        download_name=filename if download else None,
+    )
 
 
 @app.route('/thumb/<filename>')
